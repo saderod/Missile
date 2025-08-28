@@ -1,0 +1,6 @@
+streamlit==1.37.1
+pandas==2.1.4
+pyarrow==18.1.0              # keep <19 for the connector’s pandas path
+pyopenssl>=23.2.0
+cryptography>=41.0.0
+pydantic==2.7.4
