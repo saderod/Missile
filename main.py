@@ -15,7 +15,7 @@ def get_sf():
         schema="RAW"
     )
 
-st.title("Snowflake Data Pipeline Demo (no AWS)")
+st.title("Missle AI Tool")
 
 conn = get_sf()
 cur = conn.cursor()
@@ -48,3 +48,4 @@ if st.button("Show Tables"):
     st.dataframe(summary)
     st.subheader("Cleaned Data (sample)")
     st.dataframe(cleaned)
+
