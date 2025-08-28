@@ -102,20 +102,18 @@ def validate_df(df: pd.DataFrame) -> t.Tuple[bool, str]:
 
 def ensure_objects(conn):
     cur = conn.cursor()
-    cur.execute(f"CREATE DATABASE IF NOT EXISTS {DB}")
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB}.{RAW}")
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB}.{PROC}")
-    # A typed staging table (you can skip if you rely on Snowpark auto_create)
-    cur.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {STAGING} (
+    # Assume DB/SCHEMAs already exist (created by admin).
+    # Only create the working tables the app needs.
+
+    # RAW.STAGING (typed or generic; adjust to your CSV)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {DB}.{RAW}.STAGING (
             ID NUMBER,
             COL_A STRING,
             COL_B FLOAT,
             _LOAD_TS TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
-        """
-    )
+    """)
 
 # ---------- Analysis & Imputation ----------
 
@@ -361,3 +359,4 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
