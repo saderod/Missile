@@ -148,7 +148,7 @@ def get_columns_and_types(conn) -> pd.DataFrame:
     """
     return pd.read_sql(sql, conn)
 
-# count the IS NULL and calc a missing rate
+# count the IS NULL and calc a missing rate & create the Summary Table
 def build_missing_summary(conn) -> pd.DataFrame:
     """Compute missing counts per column from STAGING."""
     cols = get_columns_and_types(conn)
@@ -200,6 +200,7 @@ def build_missing_summary(conn) -> pd.DataFrame:
 #     cur = conn.cursor()
 #     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
+
 def _llm_complete(conn, model: str, prompt: str) -> str:
     """
     Try AI_COMPLETE first; if not available in the account, try SNOWFLAKE.CORTEX.COMPLETE.
@@ -227,7 +228,7 @@ def _llm_complete(conn, model: str, prompt: str) -> str:
     except Exception as e:
         raise e
 
-
+# turn the LLM response into one word that the rest of the code is expecting
 def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
     """
     Normalize any LLM response to one of ALLOWED_METHODS.
@@ -241,7 +242,7 @@ def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
             return m
     return None
 
-
+# orchestration of the essemble voting + final judge / arbiter system
 def pick_method_ensemble(conn, col_name: str, miss: int, dtype: str) -> tuple[str, str, str]:
     """
     Run 3 models in parallel conceptually (serial calls here), then:
@@ -301,6 +302,8 @@ def pick_method_ensemble(conn, col_name: str, miss: int, dtype: str) -> tuple[st
         return "median", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
     return "mode", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
 
+
+# creates a table with the imputations applied of the uploaded table
 def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
     """
     Create working table and impute nulls column-by-column.
@@ -406,6 +409,7 @@ st.title("Missile AI Tool")
 conn = get_connector()
 ensure_objects(conn)
 
+# upload CSV process
 uploaded = st.file_uploader("Upload CSV", type=["csv"])
 df_uploaded: t.Optional[pd.DataFrame] = None
 
@@ -439,6 +443,7 @@ if uploaded:
 
 st.divider()
 
+# Analysis and Imputation buttons
 col_a, col_b, col_c = st.columns([1, 1, 1])
 with col_a:
     if st.button("Analyze Missing (no LLM)"):
@@ -473,7 +478,7 @@ with col_c:
 
 st.divider()
 
-# Show results
+# Show results / show tables section
 if st.button("Show Tables"):
     try:
         st.subheader("SUMMARY (PROC.SUMMARY)")
@@ -531,6 +536,7 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
 
