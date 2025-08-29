@@ -18,8 +18,10 @@ from snowflake.connector.pandas_tools import write_pandas
 from snowflake.snowpark import Session
 
 # ---------- App config ----------
+# ceates the page title and uses a full width layout
 st.set_page_config(page_title="Missile AI Tool", layout="wide")
 
+# set my variables for the DB/schema/tables
 DB = "DEMO_DB"
 RAW = "RAW"
 PROC = "PROC"
@@ -32,7 +34,10 @@ CLEANED = f"{DB}.{PROC}.CLEANED"
 # ---------- LLM ensemble settings ----------
 ALLOWED_METHODS = {"mean", "median", "mode", "constant", "drop"}
 
+# set up Snowflake Cortex
 _models = st.secrets.get("cortex_models", {})
+
+# set up models for the essemble
 MODEL_A = _models.get("model_a", "mistral-large")  # LLM 1
 MODEL_B = _models.get("model_b", "llama3-70b")     # LLM 2
 MODEL_C = _models.get("model_c", "reka-flash")     # LLM 3
@@ -61,6 +66,7 @@ def get_connector():
     return conn
 
 
+# create the SnowPark session ; needed to auto-create the Staging table to match the pandas DF
 @st.cache_resource
 def get_session():
     """Snowpark Session (handy for auto_create_table on write_pandas)."""
@@ -79,13 +85,15 @@ def get_session():
 
 # ---------- Schema validation with Pydantic ----------
 # Adjust the model to your expected upload schema.
-# Here: ID (int), COL_A (str), COL_B (float | None)
+# Here: ID (int), COL_A (str | None), COL_B (float | None)
 
+# declaring the expected col and respective types
 class UploadRow(BaseModel):
     ID: int
     COL_A: t.Optional[str] = None
     COL_B: t.Optional[float] = None
-
+    
+# allows the cleaning of raw values before checking type
     @field_validator("COL_A", mode="before")
     def cast_str(cls, v):
         if pd.isna(v):
@@ -94,6 +102,7 @@ class UploadRow(BaseModel):
 
 def validate_df(df: pd.DataFrame) -> t.Tuple[bool, str]:
     """Validate DataFrame rows against the UploadRow model."""
+    # enforces the exact columns from the expected tables
     required_cols = {"ID", "COL_A", "COL_B"}
     if set(map(str.upper, df.columns)) != required_cols:
         return False, f"CSV columns must be exactly {sorted(required_cols)} (case-insensitive)."
@@ -109,8 +118,9 @@ def validate_df(df: pd.DataFrame) -> t.Tuple[bool, str]:
         return False, f"Pydantic validation failed: {e}"
     return True, "OK"
 
-# ---------- Snowflake DDL utilities ----------
+# ---------- Snowflake Key Words utilities ----------
 
+# create the staging table if it not does not exist
 def ensure_objects(conn):
     cur = conn.cursor()
     # Assume DB/SCHEMAs already exist (created by admin).
@@ -128,6 +138,7 @@ def ensure_objects(conn):
 
 # ---------- Analysis & Imputation ----------
 
+# grab the column names and column types
 def get_columns_and_types(conn) -> pd.DataFrame:
     sql = f"""
       SELECT COLUMN_NAME, DATA_TYPE
@@ -137,6 +148,7 @@ def get_columns_and_types(conn) -> pd.DataFrame:
     """
     return pd.read_sql(sql, conn)
 
+# count the IS NULL and calc a missing rate
 def build_missing_summary(conn) -> pd.DataFrame:
     """Compute missing counts per column from STAGING."""
     cols = get_columns_and_types(conn)
@@ -184,9 +196,9 @@ def build_missing_summary(conn) -> pd.DataFrame:
 #             return "median"
 #         return "mode"
 
-def create_working_from_staging(conn):
-    cur = conn.cursor()
-    cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
+# def create_working_from_staging(conn):
+#     cur = conn.cursor()
+#     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
 def _llm_complete(conn, model: str, prompt: str) -> str:
     """
@@ -519,6 +531,7 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
 
