@@ -343,9 +343,23 @@ fc1, fc2, fc3 = st.columns([1,1,1])
 with fc1:
     if st.button("Finalize: Copy CLEANED → RAW.FINAL"):
         cur = conn.cursor()
-        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB}.{RAW}")
-        cur.execute(f"CREATE OR REPLACE TABLE {DB}.{RAW}.FINAL AS SELECT * FROM {CLEANED}")
-        st.success(f"Created {DB}.{RAW}.FINAL from CLEANED")
+        try:
+            # Make sure CLEANED exists (user must have run an Impute step)
+            cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
+
+            # Create/replace FINAL in RAW from CLEANED (no schema creation here)
+            cur.execute(f"CREATE OR REPLACE TABLE {DB}.{RAW}.FINAL AS SELECT * FROM {CLEANED}")
+            st.success(f"Created {DB}.{RAW}.FINAL from {CLEANED}")
+
+        except snowflake.connector.errors.ProgrammingError as e:
+            st.error(
+                "Finalize failed. Ensure you've run an Impute step (so PROC.CLEANED exists) "
+                "and that your role has CREATE TABLE on DEMO_DB.RAW."
+            )
+            st.exception(e)
+        except Exception as e:
+            st.error("Finalize failed.")
+            st.exception(e)
 
 with fc2:
     if st.button("Delete PROC tables (SUMMARY, WORKING, CLEANED)"):
@@ -359,4 +373,5 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
