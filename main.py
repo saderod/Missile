@@ -28,6 +28,17 @@ WORKING = f"{DB}.{PROC}.WORKING"
 SUMMARY = f"{DB}.{PROC}.SUMMARY"
 CLEANED = f"{DB}.{PROC}.CLEANED"
 
+
+# ---------- LLM ensemble settings ----------
+ALLOWED_METHODS = {"mean", "median", "mode", "constant", "drop"}
+
+_models = st.secrets.get("cortex_models", {})
+MODEL_A = _models.get("model_a", "mistral-large")  # LLM 1
+MODEL_B = _models.get("model_b", "llama3-70b")     # LLM 2
+MODEL_C = _models.get("model_c", "reka-flash")     # LLM 3
+ARBITER_MODEL = _models.get("arbiter", "mistral-large")  # LLM 4
+
+
 # ---------- Helpers: connections ----------
 
 @st.cache_resource
@@ -144,99 +155,234 @@ def build_missing_summary(conn) -> pd.DataFrame:
         rows.append([col, total, miss, rate])
     return pd.DataFrame(rows, columns=["COLUMN_NAME", "TOTAL_ROWS", "MISSING_COUNT", "MISSING_RATE"])
 
-def pick_method_with_cortex(conn, col_name: str, miss: int, dtype: str) -> str:
-    """
-    Ask Snowflake Cortex (AI_COMPLETE) for an imputation method.
-    Falls back to a sensible default if AI is unavailable.
-    """
-    prompt = (
-        "You are selecting a single best imputation method for a column with missing values. "
-        "Valid answers: mean, median, mode, constant, drop. "
-        f"Column name: {col_name}. Missing count: {miss}. Data type: {dtype}. "
-        "Return just one word from the valid answers."
-    )
-    try:
-        sql = f"""
-          SELECT AI_COMPLETE(
-            model => 'mistral-large',
-            prompt => %s
-          ) AS METHOD
-        """
-        method = pd.read_sql(sql, conn, params=[prompt]).iloc[0, 0]
-        method = str(method).strip().lower()
-        if method not in {"mean", "median", "mode", "constant", "drop"}:
-            raise ValueError("invalid method")
-        return method
-    except Exception:
-        # fallback heuristic
-        if "NUMBER" in dtype or "FLOAT" in dtype or "INT" in dtype or "DECIMAL" in dtype or "DOUBLE" in dtype:
-            return "median"
-        return "mode"
+# def pick_method_with_cortex(conn, col_name: str, miss: int, dtype: str) -> str:
+#     """
+#     Ask Snowflake Cortex (AI_COMPLETE) for an imputation method.
+#     Falls back to a sensible default if AI is unavailable.
+#     """
+#     prompt = (
+#         "You are selecting a single best imputation method for a column with missing values. "
+#         "Valid answers: mean, median, mode, constant, drop. "
+#         f"Column name: {col_name}. Missing count: {miss}. Data type: {dtype}. "
+#         "Return just one word from the valid answers."
+#     )
+#     try:
+#         sql = f"""
+#           SELECT AI_COMPLETE(
+#             model => 'mistral-large',
+#             prompt => %s
+#           ) AS METHOD
+#         """
+#         method = pd.read_sql(sql, conn, params=[prompt]).iloc[0, 0]
+#         method = str(method).strip().lower()
+#         if method not in {"mean", "median", "mode", "constant", "drop"}:
+#             raise ValueError("invalid method")
+#         return method
+#     except Exception:
+#         # fallback heuristic
+#         if "NUMBER" in dtype or "FLOAT" in dtype or "INT" in dtype or "DECIMAL" in dtype or "DOUBLE" in dtype:
+#             return "median"
+#         return "mode"
 
 def create_working_from_staging(conn):
     cur = conn.cursor()
     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
+def _llm_complete(conn, model: str, prompt: str) -> str:
+    """
+    Try AI_COMPLETE first; if not available in the account, try SNOWFLAKE.CORTEX.COMPLETE.
+    Returns raw text response.
+    """
+    # Attempt AI_COMPLETE(model => ..., prompt => ...)
+    try:
+        df = pd.read_sql(
+            "SELECT AI_COMPLETE(model => %s, prompt => %s) AS RESP",
+            conn,
+            params=[model, prompt],
+        )
+        return str(df.iloc[0, 0]).strip()
+    except Exception:
+        pass
+
+    # Attempt SNOWFLAKE.CORTEX.COMPLETE(model, prompt)
+    try:
+        df = pd.read_sql(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS RESP",
+            conn,
+            params=[model, prompt],
+        )
+        return str(df.iloc[0, 0]).strip()
+    except Exception as e:
+        raise e
+
+
+def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
+    """
+    Normalize any LLM response to one of ALLOWED_METHODS.
+    Accepts extra words like 'Use median.' and pulls the keyword out.
+    """
+    if not text:
+        return None
+    tkn = str(text).strip().lower()
+    for m in ALLOWED_METHODS:
+        if m in tkn:
+            return m
+    return None
+
+
+def pick_method_ensemble(conn, col_name: str, miss: int, dtype: str) -> tuple[str, str, str]:
+    """
+    Run 3 models in parallel conceptually (serial calls here), then:
+    - If at least 2 agree -> choose the mode ("ensemble-mode")
+    - Else ask ARBITER_MODEL to decide ("arbiter:<model>")
+    - If all fails -> fallback heuristic ("heuristic")
+
+    Returns (method, source, votes_string)
+      method: chosen method in ALLOWED_METHODS
+      source: "ensemble-mode:<count>" | "arbiter:<model>" | "heuristic"
+      votes_string: "model:vote, model:vote, model:vote"
+    """
+    base_prompt = (
+        "Pick the best single-word imputation method for a column with missing values. "
+        f"Allowed: {', '.join(sorted(ALLOWED_METHODS))}. "
+        f"Column={col_name}, Missing={miss}, Type={dtype}. "
+        "Return ONLY the one word."
+    )
+
+    votes: list[tuple[str, t.Optional[str]]] = []
+    for model in [MODEL_A, MODEL_B, MODEL_C]:
+        try:
+            raw = _llm_complete(conn, model, base_prompt)
+            votes.append((model, _normalize_method(raw)))
+        except Exception:
+            votes.append((model, None))
+
+    # Mode decision if we have agreement
+    counts: dict[str, int] = {}
+    for _, v in votes:
+        if v:
+            counts[v] = counts.get(v, 0) + 1
+
+    if counts:
+        best, n = max(counts.items(), key=lambda kv: kv[1])
+        if n >= 2:  # at least two models agree
+            return best, f"ensemble-mode:{n}", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
+
+    # No agreement -> call arbiter with the votes
+    try:
+        vote_str = ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
+        arb_prompt = (
+            "You are the judge. Choose the single best imputation method. "
+            f"Allowed: {', '.join(sorted(ALLOWED_METHODS))}. "
+            f"Column={col_name}, Missing={miss}, Type={dtype}. "
+            f"Model votes: {vote_str}. "
+            "Return ONLY the chosen method word."
+        )
+        arb = _normalize_method(_llm_complete(conn, ARBITER_MODEL, arb_prompt))
+        if arb:
+            return arb, f"arbiter:{ARBITER_MODEL}", vote_str
+    except Exception:
+        pass
+
+    # Final fallback: heuristic
+    if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
+        return "median", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
+    return "mode", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
+
 def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
     """
     Create working table and impute nulls column-by-column.
-    Returns a summary DataFrame with chosen methods.
+    If use_llm=True, pick imputation via the 3-model ensemble + arbiter.
+    Returns a summary DataFrame with chosen methods and sources.
     """
-    create_working_from_staging(conn)
-    cols = get_columns_and_types(conn)
+    # fresh working copy
     cur = conn.cursor()
+    cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
+
+    # columns/types from STAGING
+    cols = pd.read_sql(
+        f"""
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM {DB}.INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'STAGING'
+        ORDER BY ORDINAL_POSITION
+        """,
+        conn,
+        params=[RAW],
+    )
+
     summary_rows = []
 
     for _, r in cols.iterrows():
         col = r["COLUMN_NAME"]
         dtype = r["DATA_TYPE"]
+
+        # how many are missing?
         miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
         if miss == 0:
-            summary_rows.append([col, miss, 0.0, "none"])
+            summary_rows.append([col, miss, 0.0, "none", "none", ""])
             continue
 
-        method = pick_method_with_cortex(conn, col, miss, dtype) if use_llm else (
-            "median" if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]) else "mode"
-        )
+        if use_llm:
+            method, source, votes = pick_method_ensemble(conn, col, miss, dtype)
+        else:
+            method = "median" if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]) else "mode"
+            source = "heuristic"
+            votes = ""
 
-        # Apply chosen method
+        # ---- apply the chosen method ----
         if method == "drop":
             cur.execute(f"DELETE FROM {WORKING} WHERE {col} IS NULL")
-        elif method in ("mean", "median") and any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
+        elif method in {"mean", "median"} and any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
             agg = "AVG" if method == "mean" else "MEDIAN"
-            # compute fill value
             val = cur.execute(f"SELECT {agg}({col}) FROM {WORKING} WHERE {col} IS NOT NULL").fetchone()[0]
             cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (val,))
         elif method == "mode":
-            mode_sql = f"""
-              SELECT {col}
-              FROM {WORKING}
-              WHERE {col} IS NOT NULL
-              GROUP BY {col}
-              ORDER BY COUNT(*) DESC
-              LIMIT 1
-            """
-            res = cur.execute(mode_sql).fetchone()
+            res = cur.execute(
+                f"""
+                SELECT {col}
+                FROM {WORKING}
+                WHERE {col} IS NOT NULL
+                GROUP BY {col}
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+                """
+            ).fetchone()
             fill = res[0] if res else "UNKNOWN"
             cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (fill,))
         elif method == "constant":
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
         else:
-            # fallback safety
+            # safety net
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
 
-        # recompute rate on working
-        total = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
+        # recompute rate after imputation
+        total_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
         missing_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
-        rate = (missing_after / total) if total else 0.0
-        summary_rows.append([col, miss, rate, method])
+        rate_after = (missing_after / total_after) if total_after else 0.0
 
-    # save cleaned table snapshot
+        summary_rows.append([col, miss, rate_after, method, source, votes])
+
+    # save cleaned table
     cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
 
-    # write summary
-    sdf = pd.DataFrame(summary_rows, columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"])
-    cur.execute(f"CREATE OR REPLACE TABLE {SUMMARY} (COLUMN_NAME STRING, MISSING_BEFORE NUMBER, MISSING_RATE_AFTER FLOAT, IMPUTATION_METHOD STRING)")
+    # write extended summary (with SOURCE + VOTES)
+    sdf = pd.DataFrame(
+        summary_rows,
+        columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD", "SOURCE", "VOTES"],
+    )
+    cur.execute(
+        f"""
+        CREATE OR REPLACE TABLE {SUMMARY} (
+          COLUMN_NAME STRING,
+          MISSING_BEFORE NUMBER,
+          MISSING_RATE_AFTER FLOAT,
+          IMPUTATION_METHOD STRING,
+          SOURCE STRING,
+          VOTES STRING
+        )
+        """
+    )
     write_pandas(conn, sdf, table_name="SUMMARY", database=DB, schema=PROC, quote_identifiers=False)
 
     return sdf
@@ -373,5 +519,6 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
