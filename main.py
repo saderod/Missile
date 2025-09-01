@@ -406,7 +406,7 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ## title text and centering it
 st.markdown(
-    "<h1 style='text-align: center; margin-top: 0;'>Missile AI Tool</h1>",
+    "<h1 style='text-align: center; margin-top: 0;'>Missile AI</h1>",
     unsafe_allow_html=True,
 )
 
@@ -540,6 +540,7 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
 
