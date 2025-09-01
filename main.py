@@ -402,9 +402,15 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
     return sdf
 
-# ---------- UI ----------
+###### ---------- UI ----------
 
-st.title("Missile AI Tool")
+## title text and centering it
+left, mid, right = st.columns([1,3,1])
+with mid:
+    # small spacer
+    st.markdown("## ")
+    # change to just 1 # for H1
+    st.write("## Missile AI Tool")
 
 conn = get_connector()
 ensure_objects(conn)
@@ -536,6 +542,7 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
 
