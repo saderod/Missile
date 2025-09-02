@@ -61,7 +61,7 @@ st.markdown(
 .stButton > button{
   font-size: 40px !important;
   font-weight: 700 !important;
-  padding: 0.9rem 1.4rem !important;
+  padding: 0.9rem 1.7rem !important;
   border-radius: 12px !important;
 }
 
@@ -496,6 +496,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
 
 # CLOSE the shared wrapper
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
