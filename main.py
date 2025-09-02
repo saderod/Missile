@@ -537,7 +537,6 @@ st.divider()
 
 
 ### Finalize or cleanup
-st.divider()
 st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
 
@@ -583,6 +582,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
