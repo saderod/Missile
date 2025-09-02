@@ -81,7 +81,7 @@ CLEANED = f"{DB}.{PROC}.CLEANED"
 # ---------- LLM settings (single model) ----------
 ALLOWED_METHODS = {"mean", "median", "mode", "constant", "drop"}
 # You can set `st.secrets["cortex_models"]["model"]` to override
-SINGLE_MODEL = st.secrets.get("cortex_models", {}).get("model", "mistral-large")
+SINGLE_MODEL = st.secrets.get("cortex_models", {}).get("model", "reka-flash")
 
 # ---------- Helpers: connections ----------
 @st.cache_resource
@@ -204,11 +204,11 @@ def build_missing_summary(conn) -> pd.DataFrame:
 
 # --- Single-model Cortex helper ---
 def _llm_complete(conn, model: str, prompt: str) -> str:
+    def _llm_complete(conn, model: str, prompt: str) -> str:
     """
-    Try AI_COMPLETE first; if not available in the account, try SNOWFLAKE.CORTEX.COMPLETE.
+    Try AI_COMPLETE first; if not available, try SNOWFLAKE.CORTEX.COMPLETE.
     Returns raw text response.
     """
-    # Attempt AI_COMPLETE(model => ..., prompt => ...)
     try:
         df = pd.read_sql(
             "SELECT AI_COMPLETE(model => %s, prompt => %s) AS RESP",
@@ -219,67 +219,86 @@ def _llm_complete(conn, model: str, prompt: str) -> str:
     except Exception:
         pass
 
-    # Attempt SNOWFLAKE.CORTEX.COMPLETE(model, prompt)
-    try:
-        df = pd.read_sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS RESP",
-            conn,
-            params=[model, prompt],
-        )
-        return str(df.iloc[0, 0]).strip()
-    except Exception as e:
-        raise e
+    df = pd.read_sql(
+        "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS RESP",
+        conn,
+        params=[model, prompt],
+    )
+    return str(df.iloc[0, 0]).strip()
 
-def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
-    """
-    Normalize any LLM response to one of ALLOWED_METHODS.
-    Accepts extra words like 'Use median.' and pulls the keyword out.
-    """
+def _normalize_method(text: str | None) -> str | None:
     if not text:
         return None
     tkn = str(text).strip().lower()
+    # accept sentences like "Use median"
     for m in ALLOWED_METHODS:
         if m in tkn:
             return m
     return None
 
-def pick_method_llm(conn, col_name: str, miss: int, dtype: str) -> str:
+def choose_methods_llm_bulk(conn, profile: list[dict]) -> dict[str, str]:
     """
-    Ask ONE Cortex model for an imputation method.
-    Falls back to a simple heuristic if the call fails or returns junk.
+    ONE Cortex call for all columns with missing data.
+    profile = [{name, type, missing_count, total_rows, missing_rate}, ...]
+    Returns a dict: {column_name -> method}
     """
-    prompt = (
-        "Return ONE word for the best imputation method for a column with missing values. "
-        f"Allowed words: {', '.join(sorted(ALLOWED_METHODS))}. "
-        f"Column={col_name}, Missing={miss}, Type={dtype}. "
-        "Answer with ONE word only."
-    )
-    try:
-        raw = _llm_complete(conn, SINGLE_MODEL, prompt)
-        m = _normalize_method(raw)
-        if m:
-            return m
-    except Exception:
-        pass
+    # Only send columns that have missing > 0 and are not clearly numeric (we'll default numeric to median fast)
+    ai_candidates = []
+    for p in profile:
+        dt = p["type"]
+        if p["missing_count"] > 0 and not any(x in dt for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
+            ai_candidates.append({
+                "name": p["name"],
+                "type": dt,
+                "missing_count": p["missing_count"],
+                "missing_rate": round(p["missing_rate"], 6),
+            })
 
-    # fallback heuristic
-    if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
-        return "median"
-    return "mode"
+    # If nothing to ask the LLM, return empty (we'll fill heuristically)
+    if not ai_candidates:
+        return {}
+
+    # Keep prompt compact; ask for strict JSON with allowed methods only
+    prompt = (
+        "Return a STRICT JSON object mapping each column name to ONE imputation method word. "
+        f"Allowed words only: {', '.join(sorted(ALLOWED_METHODS))}. "
+        "Use 'median' for numeric-like data (not included here), 'mode' or 'constant' for text; "
+        "use 'drop' only if missing_rate > 0.5 and dropping won't destroy the table. "
+        "No prose, no markdown, just JSON. "
+        f"Columns: {json.dumps(ai_candidates, ensure_ascii=False)}"
+    )
+
+    raw = _llm_complete(conn, SINGLE_MODEL, prompt)
+    # Try to extract JSON
+    try:
+        # Strip code fences if any
+        if raw.strip().startswith("```"):
+            raw = raw.split("```")[1]
+        plan = json.loads(raw)
+        # Validate / normalize methods
+        out = {}
+        for k, v in plan.items():
+            m = _normalize_method(v)
+            if m:
+                out[k] = m
+        return out
+    except Exception:
+        # If parsing failed, return empty -> we’ll do heuristics
+        return {}
 
 # creates a table with the imputations applied of the uploaded table
 def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
     """
     Create working table and impute nulls column-by-column.
-    If use_llm=True, pick imputation via the single Cortex model.
+    If use_llm=True, call Cortex ONCE to get a JSON plan for all columns.
     Returns a summary DataFrame with chosen methods.
     """
-    # fresh working copy
     cur = conn.cursor()
+    # Fresh working copy
     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
-    # columns/types from STAGING
-    cols = pd.read_sql(
+    # Build a missing profile once
+    cols_df = pd.read_sql(
         f"""
         SELECT COLUMN_NAME, DATA_TYPE
         FROM {DB}.INFORMATION_SCHEMA.COLUMNS
@@ -289,31 +308,53 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
         conn,
         params=[RAW],
     )
+    if cols_df.empty:
+        st.warning("No columns found in STAGING.")
+        return pd.DataFrame(columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"])
+
+    total = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0] or 0
+
+    profile = []
+    for _, r in cols_df.iterrows():
+        col = r["COLUMN_NAME"]
+        dtype = r["DATA_TYPE"]
+        miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
+        rate = (miss / total) if total else 0.0
+        profile.append({"name": col, "type": dtype, "missing_count": miss, "total_rows": total, "missing_rate": rate})
+
+    # Plan methods: one LLM call for all text-like columns
+    llm_plan: dict[str, str] = {}
+    if use_llm:
+        llm_plan = choose_methods_llm_bulk(conn, profile)
 
     summary_rows = []
 
-    for _, r in cols.iterrows():
-        col = r["COLUMN_NAME"]
-        dtype = r["DATA_TYPE"]
+    # Apply imputations
+    for p in profile:
+        col = p["name"]
+        dtype = p["type"]
+        miss = p["missing_count"]
 
-        # how many are missing?
-        miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
         if miss == 0:
-            summary_rows.append([col, miss, 0.0, "none"])
+            summary_rows.append([col, 0, 0.0, "none"])
             continue
 
-        if use_llm:
-            method = pick_method_llm(conn, col, miss, dtype)
+        # Heuristic defaults (fast)
+        if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
+            method = "median"
         else:
-            method = "median" if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]) else "mode"
+            method = llm_plan.get(col, "mode" if p["missing_rate"] < 0.5 else "constant")
 
-        # ---- apply the chosen method ----
+        # ---- apply chosen method ----
         if method == "drop":
+            # Note: this deletes rows with NULL in this column
             cur.execute(f"DELETE FROM {WORKING} WHERE {col} IS NULL")
+
         elif method in {"mean", "median"} and any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
             agg = "AVG" if method == "mean" else "MEDIAN"
             val = cur.execute(f"SELECT {agg}({col}) FROM {WORKING} WHERE {col} IS NOT NULL").fetchone()[0]
             cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (val,))
+
         elif method == "mode":
             res = cur.execute(
                 f"""
@@ -327,23 +368,23 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
             ).fetchone()
             fill = res[0] if res else "UNKNOWN"
             cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (fill,))
+
         elif method == "constant":
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
+
         else:
             # safety net
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
 
         # recompute rate after imputation
-        total_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
+        new_total = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
         missing_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
-        rate_after = (missing_after / total_after) if total_after else 0.0
-
+        rate_after = (missing_after / new_total) if new_total else 0.0
         summary_rows.append([col, miss, rate_after, method])
 
-    # save cleaned table
+    # Save cleaned table & write summary
     cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
 
-    # write summary
     sdf = pd.DataFrame(
         summary_rows,
         columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"],
@@ -513,3 +554,4 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
