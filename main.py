@@ -88,6 +88,42 @@ hr { margin: 1.25rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* Make the whole app (content + sidebar) sit on a black→gray gradient */
+html, body, [data-testid="stAppViewContainer"] {
+  height: 100%;
+  background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 45%, #2a2a2a 100%) !important;
+  background-attachment: fixed;  /* nice effect on scroll */
+  color: #e5e7eb;                /* lighter default text */
+}
+
+/* Make the header transparent so the gradient shows through */
+[data-testid="stHeader"] {
+  background: transparent !important;
+}
+
+/* Optional: darken the sidebar a bit but still show the gradient */
+[data-testid="stSidebar"] {
+  background: rgba(0,0,0,0.35) !important;
+  backdrop-filter: blur(2px);
+}
+
+/* Ensure the main content area doesn’t inject a white panel */
+[data-testid="block-container"]{
+  background: transparent !important;
+}
+
+/* (Optional) Inputs on dark bg */
+.stTextInput input, .stNumberInput input, .stTextArea textarea,
+.stSelectbox > div > div, .stMultiSelect > div > div {
+  background-color: #111 !important;
+  color: #e5e7eb !important;
+  border: 1px solid #333 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Constants (DB/Schema/Tables)
 # ────────────────────────────────────────────────────────────────────────────────
@@ -480,5 +516,6 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
 
