@@ -204,7 +204,6 @@ def build_missing_summary(conn) -> pd.DataFrame:
 
 # --- Single-model Cortex helper ---
 def _llm_complete(conn, model: str, prompt: str) -> str:
-    def _llm_complete(conn, model: str, prompt: str) -> str:
     """
     Try AI_COMPLETE first; if not available, try SNOWFLAKE.CORTEX.COMPLETE.
     Returns raw text response.
@@ -235,7 +234,7 @@ def _normalize_method(text: str | None) -> str | None:
         if m in tkn:
             return m
     return None
-
+  
 def choose_methods_llm_bulk(conn, profile: list[dict]) -> dict[str, str]:
     """
     ONE Cortex call for all columns with missing data.
@@ -554,4 +553,5 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
