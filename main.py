@@ -536,42 +536,54 @@ st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
 
-# Finalize or cleanup
-fc1, fc2, fc3 = st.columns([1,1,1])
+### Finalize or cleanup
+st.divider()
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
 
-with fc1:
-    if st.button("Finalize: Copy CLEANED → RAW.FINAL"):
-        cur = conn.cursor()
-        try:
-            # Make sure CLEANED exists (user must have run an Impute step)
-            cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
+# One-click publish: finalize & clean PROC artifacts
+if st.button("Publish (Finalize & Clean)", use_container_width=True):
+    cur = conn.cursor()
+    try:
+        # Ensure CLEANED exists (user must have run an Impute step)
+        cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
 
-            # Create/replace FINAL in RAW from CLEANED (no schema creation here)
-            cur.execute(f"CREATE OR REPLACE TABLE {DB}.{RAW}.FINAL AS SELECT * FROM {CLEANED}")
-            st.success(f"Created {DB}.{RAW}.FINAL from {CLEANED}")
+        # Finalize: promote CLEANED to RAW.FINAL
+        cur.execute(f"CREATE OR REPLACE TABLE {DB}.{RAW}.FINAL AS SELECT * FROM {CLEANED}")
 
-        except snowflake.connector.errors.ProgrammingError as e:
-            st.error(
-                "Finalize failed. Ensure you've run an Impute step (so PROC.CLEANED exists) "
-                "and that your role has CREATE TABLE on DEMO_DB.RAW."
-            )
-            st.exception(e)
-        except Exception as e:
-            st.error("Finalize failed.")
-            st.exception(e)
-
-with fc2:
-    if st.button("Delete PROC tables (SUMMARY, WORKING, CLEANED)"):
-        cur = conn.cursor()
+        # Clean: drop working PROC tables
         cur.execute(f"DROP TABLE IF EXISTS {SUMMARY}")
         cur.execute(f"DROP TABLE IF EXISTS {WORKING}")
         cur.execute(f"DROP TABLE IF EXISTS {CLEANED}")
-        st.warning("Deleted PROC tables.")
 
-with fc3:
-    if st.button("Truncate STAGING"):
-        conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
-        st.warning("STAGING truncated.")
+        st.success(f"Published to {DB}.{RAW}.FINAL and cleaned PROC tables.")
+    except snowflake.connector.errors.ProgrammingError as e:
+        st.error(
+            "Publish failed. Make sure you've run an Impute step (so PROC.CLEANED exists) "
+            "and that your role has CREATE TABLE on DEMO_DB.RAW."
+        )
+        st.exception(e)
+    except Exception as e:
+        st.error("Publish failed.")
+        st.exception(e)
+
+# Small advanced expander for rare “start fresh” need
+with st.expander("Advanced: Reset Pipeline (danger)"):
+    st.caption("Drops PROC tables and empties RAW.STAGING so you can upload a fresh CSV.")
+    if st.button("Reset Pipeline"):
+        try:
+            cur = conn.cursor()
+            cur.execute(f"DROP TABLE IF EXISTS {SUMMARY}")
+            cur.execute(f"DROP TABLE IF EXISTS {WORKING}")
+            cur.execute(f"DROP TABLE IF EXISTS {CLEANED}")
+            cur.execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
+            st.warning("Pipeline reset: dropped PROC tables and truncated RAW.STAGING.")
+        except Exception as e:
+            st.error("Reset failed.")
+            st.exception(e)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
