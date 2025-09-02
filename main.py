@@ -380,6 +380,7 @@ if st.session_state["show_tutorial"]:
 
 st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 conn = get_connector()
 ensure_objects(conn)
 
@@ -509,4 +510,5 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
