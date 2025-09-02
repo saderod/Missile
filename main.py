@@ -13,6 +13,10 @@ import pandas as pd
 import streamlit as st
 from pydantic import BaseModel, field_validator
 import re
+import json
+import math
+import numpy as np
+_NUMERIC_MARKERS = ("NUMBER", "FLOAT", "DOUBLE", "DECIMAL", "INT")
 
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
@@ -255,72 +259,127 @@ def _normalize_method(text: str | None) -> str | None:
         if m in tkn:
             return m
     return None
-  
-def choose_methods_llm_bulk(conn, profile: list[dict]) -> dict[str, str]:
-    """
-    ONE Cortex call for all columns with missing data.
-    profile = [{name, type, missing_count, total_rows, missing_rate}, ...]
-    Returns a dict: {column_name -> method}
-    """
-    # Only send columns that have missing > 0 and are not clearly numeric (we'll default numeric to median fast)
-    ai_candidates = []
-    for p in profile:
-        dt = p["type"]
-        if p["missing_count"] > 0 and not any(x in dt for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
-            ai_candidates.append({
-                "name": p["name"],
-                "type": dt,
-                "missing_count": p["missing_count"],
-                "missing_rate": round(p["missing_rate"], 6),
-            })
 
-    # If nothing to ask the LLM, return empty (we'll fill heuristically)
-    if not ai_candidates:
+
+def _is_numeric_dtype_name(dtype_name: str) -> bool:
+    dn = (dtype_name or "").upper()
+    return any(m in dn for m in _NUMERIC_MARKERS)
+
+def _jsonify(val):
+    """Make any scalar json-serializable; map NaN to None."""
+    if val is None:
+        return None
+    if isinstance(val, (np.generic,)):  # numpy scalar -> python scalar
+        return val.item()
+    if isinstance(val, float) and math.isnan(val):
+        return None
+    return val  # ints/str/bool already fine
+
+def _parse_llm_methods(resp_text: str) -> dict[str, str]:
+    """
+    Expect the model to return a JSON array like:
+      [{"name":"COL_A","method":"median"}, ...]
+    We still try to be forgiving and extract the first [...] block.
+    """
+    s = (resp_text or "").strip()
+    # Extract first JSON array if the model wrapped text around it
+    start = s.find("[")
+    end   = s.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        s = s[start:end+1]
+    data = json.loads(s)  # will raise if it's not valid JSON
+    out: dict[str, str] = {}
+    for obj in data:
+        # accept common key variants
+        name = (obj.get("name") or obj.get("column") or obj.get("col") or "").strip()
+        method = (obj.get("method") or "").strip().lower()
+        if name and method in ALLOWED_METHODS:
+            out[name.upper()] = method
+    return out
+  
+def choose_methods_llm_bulk(conn, profile_df: pd.DataFrame, model: str | None = None) -> dict[str, str]:
+    """
+    profile_df columns expected: COLUMN_NAME, DATA_TYPE, TOTAL_ROWS, MISSING_COUNT
+    Returns mapping: {COLUMN_NAME -> method}
+    """
+    if model is None:
+        # single-model path (fast) – reuse whatever you configured as your primary model
+        model = MODEL_A
+
+    # Keep only columns that have missing values; cap to keep prompt small/fast
+    prof = profile_df.copy()
+    prof["MISSING_COUNT"] = prof["MISSING_COUNT"].fillna(0).astype(int)
+    prof = prof[prof["MISSING_COUNT"] > 0].sort_values("MISSING_COUNT", ascending=False)
+
+    if prof.empty:
         return {}
 
-    # Keep prompt compact; ask for strict JSON with allowed methods only
+    # reasonable cap (tune if needed)
+    prof = prof.head(40)
+
+    # Build a clean JSON payload (plain types only)
+    payload = []
+    dtype_map: dict[str, str] = {}
+    for _, r in prof.iterrows():
+        col = str(r["COLUMN_NAME"]).upper()
+        dtype = str(r["DATA_TYPE"])
+        total = int(_jsonify(r.get("TOTAL_ROWS", 0)))
+        miss  = int(_jsonify(r.get("MISSING_COUNT", 0)))
+        dtype_map[col] = dtype
+        payload.append({
+            "name": col,
+            "dtype": dtype,
+            "total": total,
+            "missing": miss,
+            "numeric": _is_numeric_dtype_name(dtype)
+        })
+
     prompt = (
-        "Return a STRICT JSON object mapping each column name to ONE imputation method word. "
-        f"Allowed words only: {', '.join(sorted(ALLOWED_METHODS))}. "
-        "Use 'median' for numeric-like data (not included here), 'mode' or 'constant' for text; "
-        "use 'drop' only if missing_rate > 0.5 and dropping won't destroy the table. "
-        "No prose, no markdown, just JSON. "
-        f"Columns: {json.dumps(ai_candidates, ensure_ascii=False)}"
+        "You are selecting an imputation method for EACH column.\n"
+        "Valid methods: mean, median, mode, constant, drop.\n"
+        "Rules of thumb:\n"
+        "- numeric columns usually use median (robust) or mean\n"
+        "- categorical text uses mode; use constant only if very sparse\n"
+        "- use drop only if the column is mostly missing and non-critical\n\n"
+        "Return ONLY valid JSON array: "
+        '[{"name":"<COLUMN_NAME>","method":"<one of mean|median|mode|constant|drop>"}].\n\n'
+        f"Columns: {json.dumps(payload, ensure_ascii=False)}"
     )
 
-    raw = _llm_complete(conn, SINGLE_MODEL, prompt)
-    # Try to extract JSON
+    methods: dict[str, str] = {}
     try:
-        # Strip code fences if any
-        if raw.strip().startswith("```"):
-            raw = raw.split("```")[1]
-        plan = json.loads(raw)
-        # Validate / normalize methods
-        out = {}
-        for k, v in plan.items():
-            m = _normalize_method(v)
-            if m:
-                out[k] = m
-        return out
+        resp = _llm_complete(conn, model, prompt)
+        methods = _parse_llm_methods(resp)
     except Exception:
-        # If parsing failed, return empty -> we’ll do heuristics
-        return {}
+        methods = {}
+
+    # Fallback for anything missing from the LLM output
+    for col in (p["name"] for p in payload):
+        if col not in methods:
+            methods[col] = "median" if _is_numeric_dtype_name(dtype_map[col]) else "mode"
+
+    return methods
 
 # creates a table with the imputations applied of the uploaded table
 def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
     """
-    Create working table and impute nulls column-by-column.
-    If use_llm=True, call Cortex ONCE to get a JSON plan for all columns.
-    Returns a summary DataFrame with chosen methods.
+    Create WORKING from STAGING, impute nulls, save CLEANED + SUMMARY.
+    If use_llm=True, use choose_methods_llm_bulk() to pick per-column methods;
+    otherwise use a simple heuristic (median for numeric, mode for text).
     """
+    def qident(name: str) -> str:
+        # Quote an identifier safely for Snowflake (handles spaces/mixed case)
+        return '"' + str(name).replace('"', '""') + '"'
+
     cur = conn.cursor()
+
     # Fresh working copy
     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
-    # Build a missing profile once
-    cols_df = pd.read_sql(
+    # Discover columns and types from STAGING (same layout as WORKING right now)
+    cols = pd.read_sql(
         f"""
-        SELECT COLUMN_NAME, DATA_TYPE
+        SELECT COLUMN_NAME, DATA_TYPE, ORDINAL_POSITION
         FROM {DB}.INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'STAGING'
         ORDER BY ORDINAL_POSITION
@@ -328,94 +387,184 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
         conn,
         params=[RAW],
     )
-    if cols_df.empty:
-        st.warning("No columns found in STAGING.")
-        return pd.DataFrame(columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"])
 
-    total = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0] or 0
+    # Nothing to do?
+    if cols.empty:
+        cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
+        sdf = pd.DataFrame(
+            columns=[
+                "COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER",
+                "IMPUTATION_METHOD", "SOURCE", "VOTES"
+            ]
+        )
+        cur.execute(
+            f"""
+            CREATE OR REPLACE TABLE {SUMMARY} (
+              COLUMN_NAME STRING,
+              MISSING_BEFORE NUMBER,
+              MISSING_RATE_AFTER FLOAT,
+              IMPUTATION_METHOD STRING,
+              SOURCE STRING,
+              VOTES STRING
+            )
+            """
+        )
+        if not sdf.empty:
+            write_pandas(conn, sdf, table_name="SUMMARY", database=DB, schema=PROC, quote_identifiers=False)
+        return sdf
 
-    profile = []
-    for _, r in cols_df.iterrows():
+    # Totals
+    total_rows = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
+    if not total_rows:
+        # Empty table; just materialize CLEANED and empty SUMMARY
+        cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
+        sdf = pd.DataFrame(
+            columns=[
+                "COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER",
+                "IMPUTATION_METHOD", "SOURCE", "VOTES"
+            ]
+        )
+        cur.execute(
+            f"""
+            CREATE OR REPLACE TABLE {SUMMARY} (
+              COLUMN_NAME STRING,
+              MISSING_BEFORE NUMBER,
+              MISSING_RATE_AFTER FLOAT,
+              IMPUTATION_METHOD STRING,
+              SOURCE STRING,
+              VOTES STRING
+            )
+            """
+        )
+        return sdf
+
+    # Build a quick profile (missing counts per column)
+    prof_rows = []
+    for _, r in cols.iterrows():
         col = r["COLUMN_NAME"]
-        dtype = r["DATA_TYPE"]
-        miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
-        rate = (miss / total) if total else 0.0
-        profile.append({"name": col, "type": dtype, "missing_count": miss, "total_rows": total, "missing_rate": rate})
+        miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {qident(col)} IS NULL").fetchone()[0]
+        prof_rows.append([col, r["DATA_TYPE"], int(total_rows), int(miss)])
+    profile = pd.DataFrame(prof_rows, columns=["COLUMN_NAME", "DATA_TYPE", "TOTAL_ROWS", "MISSING_COUNT"])
 
-    # Plan methods: one LLM call for all text-like columns
+    # Ask the single LLM (bulk) only once, if requested
     llm_plan: dict[str, str] = {}
     if use_llm:
-        llm_plan = choose_methods_llm_bulk(conn, profile)
+        try:
+            llm_plan = choose_methods_llm_bulk(conn, profile)  # {COL -> method}
+        except Exception:
+            llm_plan = {}
 
+    # Apply per column
     summary_rows = []
 
-    # Apply imputations
-    for p in profile:
-        col = p["name"]
-        dtype = p["type"]
-        miss = p["missing_count"]
+    for _, r in cols.iterrows():
+        col = str(r["COLUMN_NAME"])
+        dt  = str(r["DATA_TYPE"])
+        col_q = qident(col)
 
-        if miss == 0:
-            summary_rows.append([col, 0, 0.0, "none"])
+        # missing before
+        miss_before = int(profile.loc[profile["COLUMN_NAME"] == col, "MISSING_COUNT"].values[0])
+
+        if miss_before == 0:
+            summary_rows.append([col, 0, 0.0, "none", "none", ""])
             continue
 
-        # Heuristic defaults (fast)
-        if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
-            method = "median"
+        # Decide method
+        if use_llm:
+            method = llm_plan.get(col.upper())
+            if not method:
+                method = "median" if _is_numeric_dtype_name(dt) else "mode"
+                source = "heuristic"
+            else:
+                source = "llm"
         else:
-            method = llm_plan.get(col, "mode" if p["missing_rate"] < 0.5 else "constant")
+            method = "median" if _is_numeric_dtype_name(dt) else "mode"
+            source = "heuristic"
 
-        # ---- apply chosen method ----
+        # --- Apply method ---
         if method == "drop":
-            # Note: this deletes rows with NULL in this column
-            cur.execute(f"DELETE FROM {WORKING} WHERE {col} IS NULL")
+            cur.execute(f"DELETE FROM {WORKING} WHERE {col_q} IS NULL")
 
-        elif method in {"mean", "median"} and any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
+        elif method in ("mean", "median") and _is_numeric_dtype_name(dt):
             agg = "AVG" if method == "mean" else "MEDIAN"
-            val = cur.execute(f"SELECT {agg}({col}) FROM {WORKING} WHERE {col} IS NOT NULL").fetchone()[0]
-            cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (val,))
+            val = cur.execute(
+                f"SELECT {agg}({col_q}) FROM {WORKING} WHERE {col_q} IS NOT NULL"
+            ).fetchone()[0]
+            # Only update if we have a value
+            if val is not None:
+                cur.execute(f"UPDATE {WORKING} SET {col_q} = %s WHERE {col_q} IS NULL", (val,))
 
         elif method == "mode":
             res = cur.execute(
                 f"""
-                SELECT {col}
+                SELECT {col_q}
                 FROM {WORKING}
-                WHERE {col} IS NOT NULL
-                GROUP BY {col}
-                ORDER BY COUNT(*) DESC
+                WHERE {col_q} IS NOT NULL
+                GROUP BY {col_q}
+                ORDER BY COUNT(*) DESC, {col_q}
                 LIMIT 1
                 """
             ).fetchone()
-            fill = res[0] if res else "UNKNOWN"
-            cur.execute(f"UPDATE {WORKING} SET {col} = %s WHERE {col} IS NULL", (fill,))
+            if res is None:
+                # No non-null values; choose a sensible constant
+                fill = 0 if _is_numeric_dtype_name(dt) else "UNKNOWN"
+            else:
+                fill = res[0]
+            cur.execute(f"UPDATE {WORKING} SET {col_q} = %s WHERE {col_q} IS NULL", (fill,))
 
         elif method == "constant":
-            cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
+            fill = 0 if _is_numeric_dtype_name(dt) else "UNKNOWN"
+            cur.execute(f"UPDATE {WORKING} SET {col_q} = %s WHERE {col_q} IS NULL", (fill,))
 
         else:
-            # safety net
-            cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
+            # Safety net: behave like 'mode' for text, 'median' for numeric
+            if _is_numeric_dtype_name(dt):
+                val = cur.execute(
+                    f"SELECT MEDIAN({col_q}) FROM {WORKING} WHERE {col_q} IS NOT NULL"
+                ).fetchone()[0]
+                if val is not None:
+                    cur.execute(f"UPDATE {WORKING} SET {col_q} = %s WHERE {col_q} IS NULL", (val,))
+            else:
+                res = cur.execute(
+                    f"""
+                    SELECT {col_q}
+                    FROM {WORKING}
+                    WHERE {col_q} IS NOT NULL
+                    GROUP BY {col_q}
+                    ORDER BY COUNT(*) DESC, {col_q}
+                    LIMIT 1
+                    """
+                ).fetchone()
+                fill = (res[0] if res else "UNKNOWN")
+                cur.execute(f"UPDATE {WORKING} SET {col_q} = %s WHERE {col_q} IS NULL", (fill,))
 
-        # recompute rate after imputation
-        new_total = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
-        missing_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
-        rate_after = (missing_after / new_total) if new_total else 0.0
-        summary_rows.append([col, miss, rate_after, method])
+        # Stats after
+        total_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
+        miss_after  = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col_q} IS NULL").fetchone()[0]
+        rate_after  = (miss_after / total_after) if total_after else 0.0
 
-    # Save cleaned table & write summary
+        summary_rows.append([col, miss_before, rate_after, method, source, ""])
+
+    # Materialize CLEANED and SUMMARY
     cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
 
     sdf = pd.DataFrame(
         summary_rows,
-        columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"],
+        columns=[
+            "COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER",
+            "IMPUTATION_METHOD", "SOURCE", "VOTES"
+        ],
     )
+
     cur.execute(
         f"""
         CREATE OR REPLACE TABLE {SUMMARY} (
           COLUMN_NAME STRING,
           MISSING_BEFORE NUMBER,
           MISSING_RATE_AFTER FLOAT,
-          IMPUTATION_METHOD STRING
+          IMPUTATION_METHOD STRING,
+          SOURCE STRING,
+          VOTES STRING
         )
         """
     )
@@ -575,6 +724,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
