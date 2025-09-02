@@ -1,5 +1,5 @@
 # main.py
-# Streamlit + Snowflake end-to-end demo (no AWS).
+# Streamlit + Snowflake end-to-end demo.
 # - Upload CSV
 # - Validate with Pydantic
 # - Write to Snowflake
@@ -21,33 +21,55 @@ from snowflake.snowpark import Session
 # ceates the page title and uses a full width layout
 st.set_page_config(page_title="Missile AI", layout="centered")
 
-# ---------- light styling helpers ----------
+# ---------- UI styling and theme set up ----------
 st.markdown("""
 <style>
-/* Streamlit 1.20+ uses this test id for the main block container */
+/* Centered, narrow app container */
 [data-testid="block-container"]{
-  max-width: 960px !important;  /* <= tweak this number to compress more or less */
+  max-width: 960px !important;   /* change this if you want the whole page wider/narrower */
   padding-left: 2rem !important;
   padding-right: 2rem !important;
   margin-left: auto !important;
   margin-right: auto !important;
 }
 
-/* Optional: make it even tighter on very large screens */
-@media (min-width: 1600px){
-  [data-testid="block-container"]{ max-width: 880px !important; }
+/* Section titles like: Upload CSV, Analyze & Impute, etc. */
+.section-title{
+  text-align: center;
+  font-weight: 900;
+  /* Bigger: grows a bit on larger screens */
+  font-size: clamp(36px, 5vw, 56px);
+  line-height: 1.12;
+  letter-spacing: .2px;
+  margin: 1.0rem 0 .8rem;
 }
 
-/* Optional: allow more breathing room on tablets/phones */
-@media (max-width: 1200px){
-  [data-testid="block-container"]{
-    max-width: 90% !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
-  }
+/* Make ALL Streamlit buttons larger (text + hit area) */
+.stButton > button{
+  font-size: 20px !important;          /* bigger button text */
+  font-weight: 700 !important;
+  padding: 0.9rem 1.4rem !important;   /* taller/wider buttons */
+  border-radius: 12px !important;
+}
+
+/* File uploader tweaks: slightly bigger label & helper text */
+[data-testid="stFileUploader"] label{
+  font-size: 16px; 
+  font-weight: 600;
+}
+[data-testid="stFileUploader"] small{
+  font-size: 14px;
+}
+
+/* Optional: make Streamlit subheaders (st.subheader) a bit bigger */
+h3, .stMarkdown h3{
+  font-size: 28px;
+  line-height: 1.2;
 }
 </style>
 """, unsafe_allow_html=True)
+
+
 
 ## set my variables for the DB/schema/tables
 DB = "DEMO_DB"
@@ -585,6 +607,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
