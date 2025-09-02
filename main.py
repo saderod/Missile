@@ -24,8 +24,8 @@ st.set_page_config(page_title="Missile AI Tool", layout="wide")
 # ---------- light styling helpers ----------
 st.markdown("""
 <style>
-/* a centered narrow container for sections */
-.center-narrow {max-width: 900px; margin: 0 auto;}
+/* centered *narrow* sections */
+.center-narrow {max-width: 760px; margin: 0 auto;}  /* was 900px */
 
 /* section titles */
 .section-title{
@@ -34,21 +34,20 @@ st.markdown("""
   line-height:1.15; margin: .4em 0 .6em;
 }
 
-/* make buttons a bit bigger app-wide */
+/* bigger buttons */
 .stButton > button {
   font-size: 18px;
   padding: .6rem 1.1rem;
   border-radius: 10px;
 }
 
-/* GLOBAL: add whitespace on the left/right of the whole app */
+/* GLOBAL: much wider side gutters + slightly smaller overall width cap */
 main .block-container{
-  padding-top: 1.2rem;                 /* what you had */
-  padding-left: min(6vw, 80px);        /* responsive side gutters */
-  padding-right: min(6vw, 80px);
-  /* OPTIONAL: also cap overall width for the entire app: */
-  max-width: 1200px;                   /* tweak to taste */
-  margin: 0 auto;                      /* center the capped width */
+  padding-top: 1.2rem;
+  padding-left: min(10vw, 140px);   /* was 6vw/80px */
+  padding-right: min(10vw, 140px);
+  max-width: 1040px;                /* was 1200px */
+  margin: 0 auto;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -590,6 +589,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
