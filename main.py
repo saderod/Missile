@@ -434,7 +434,7 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ## title text and centering it
 st.markdown(
-    "<h1 style='text-align:center; font-size:64px; line-height:1.1; margin:0.2em 0;'>Missile AI Tool</h1>",
+    "<h1 style='text-align:center; font-size:64px; line-height:1.1; margin:0.2em 0;'>Missile AI</h1>",
     unsafe_allow_html=True,
 )
 
@@ -585,6 +585,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
