@@ -62,9 +62,9 @@ button[kind="primary"],
 button[kind="secondary"],
 button[data-testid="baseButton-primary"],
 button[data-testid="baseButton-secondary"] {
-  font-size: 22px !important;         /* TEXT SIZE */
+  font-size: 42px !important;         /* TEXT SIZE */
   font-weight: 700 !important;
-  padding: 14px 22px !important;      /* BUTTON SIZE */
+  padding: 24px 32px !important;      /* BUTTON SIZE */
   min-height: 54px !important;
   border-radius: 12px !important;
 }
@@ -480,3 +480,4 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
