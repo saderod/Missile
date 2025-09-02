@@ -425,11 +425,9 @@ if uploaded:
         )
         st.success(f"Uploaded {len(df_uploaded):,} rows into {STAGING}")
 
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.divider()
 
 # ---- Analyze & Impute ----
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Analyze & Impute</div>", unsafe_allow_html=True)
 bcol1, bcol2 = st.columns(2, gap="large")
 
@@ -453,11 +451,9 @@ with bcol2:
             st.error("Imputation failed.")
             st.exception(e)
 
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.divider()
 
 # ---- Preview Tables ----
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Preview Table and Action Summary</div>", unsafe_allow_html=True)
 if st.button("View Tables", use_container_width=True):
     try:
@@ -478,11 +474,9 @@ if st.button("View Tables", use_container_width=True):
         st.error("Could not fetch tables.")
         st.exception(e)
 
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.divider()
 
 # ---- Finish ----
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
 if st.button("Publish (Finalize & Clean)", use_container_width=True):
     cur = conn.cursor()
@@ -516,6 +510,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
 
 
