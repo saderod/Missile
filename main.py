@@ -21,7 +21,33 @@ from snowflake.snowpark import Session
 # ceates the page title and uses a full width layout
 st.set_page_config(page_title="Missile AI Tool", layout="wide")
 
-# set my variables for the DB/schema/tables
+# ---------- light styling helpers ----------
+st.markdown("""
+<style>
+/* a centered narrow container for sections */
+.center-narrow {max-width: 900px; margin: 0 auto;}
+
+/* section titles */
+.section-title{
+  text-align:center; font-weight:800;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height:1.15; margin: .4em 0 .6em;
+}
+
+/* make buttons a bit bigger app-wide */
+.stButton > button {
+  font-size: 18px;                /* bump text */
+  padding: .6rem 1.1rem;          /* bigger click target */
+  border-radius: 10px;
+}
+
+/* optional: tighten the uploader label spacing */
+.block-container {padding-top: 1.2rem;}
+</style>
+""", unsafe_allow_html=True)
+
+
+## set my variables for the DB/schema/tables
 DB = "DEMO_DB"
 RAW = "RAW"
 PROC = "PROC"
@@ -406,15 +432,19 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ## title text and centering it
 st.markdown(
-    "<h1 style='text-align: center; margin-top: 0;'>Missile AI</h1>",
+    "<h1 style='text-align:center; font-size:64px; line-height:1.1; margin:0.2em 0;'>Missile AI Tool</h1>",
     unsafe_allow_html=True,
 )
 
 conn = get_connector()
 ensure_objects(conn)
 
-# upload CSV process
-uploaded = st.file_uploader("Upload CSV", type=["csv"])
+
+## upload CSV process
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Upload CSV</div>", unsafe_allow_html=True)
+
+uploaded = st.file_uploader("", type=["csv"])  # empty label; we use our own title
 df_uploaded: t.Optional[pd.DataFrame] = None
 
 if uploaded:
@@ -428,7 +458,7 @@ if uploaded:
     else:
         st.error(msg)
 
-    if ok and st.button("Upload to Snowflake (STAGING)"):
+    if ok and st.button("Upload to Snowflake (STAGING)", use_container_width=True):
         # normalize column names to match STAGING
         df_to_write = df_uploaded.copy()
         df_to_write.columns = [c.upper() for c in df_to_write.columns]
@@ -445,12 +475,19 @@ if uploaded:
         )
         st.success(f"Uploaded {len(df_to_write):,} rows into {STAGING}")
 
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
-# Analysis and Imputation buttons
-col_a, col_b, col_c = st.columns([1, 1, 1])
-with col_a:
-    if st.button("Analyze Missing (no LLM)"):
+
+### Analysis and Imputation buttons
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Analyze & Impute</div>", unsafe_allow_html=True)
+
+# two buttons side-by-side, centered by the narrow container
+bcol1, bcol2 = st.columns(2, gap="large")
+
+with bcol1:
+    if st.button("Analyze Missing (no LLM)", use_container_width=True):
         summary = build_missing_summary(conn)
         if summary.empty:
             st.warning("STAGING is empty.")
@@ -458,8 +495,8 @@ with col_a:
             st.subheader("Missing Summary (STAGING)")
             st.dataframe(summary)
 
-with col_b:
-    if st.button("Analyze + Impute (use Cortex if available)"):
+with bcol2:
+    if st.button("Analyze + Impute (use Cortex if available)", use_container_width=True):
         try:
             sdf = apply_imputations(conn, use_llm=True)
             st.success("Imputation completed. See tables below.")
@@ -469,21 +506,14 @@ with col_b:
             st.error("Imputation failed.")
             st.exception(e)
 
-with col_c:
-    if st.button("Analyze + Impute (no LLM)"):
-        try:
-            sdf = apply_imputations(conn, use_llm=False)
-            st.success("Imputation (no LLM) completed. See tables below.")
-            st.subheader("Imputation Summary")
-            st.dataframe(sdf)
-        except Exception as e:
-            st.error("Imputation failed.")
-            st.exception(e)
-
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
-# Show results / show tables section
-if st.button("Show Tables"):
+
+## Show results / show tables section
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+
+if st.button("Preview Table and Action Summary", use_container_width=True):
     try:
         st.subheader("SUMMARY (PROC.SUMMARY)")
         try:
@@ -502,7 +532,9 @@ if st.button("Show Tables"):
         st.error("Could not fetch tables.")
         st.exception(e)
 
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
+
 
 # Finalize or cleanup
 fc1, fc2, fc3 = st.columns([1,1,1])
@@ -540,6 +572,7 @@ with fc3:
     if st.button("Truncate STAGING"):
         conn.cursor().execute(f"TRUNCATE TABLE IF EXISTS {STAGING}")
         st.warning("STAGING truncated.")
+
 
 
 
