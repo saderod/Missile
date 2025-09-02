@@ -484,7 +484,7 @@ st.divider()
 
 # Finish
 st.markdown("<div class='section-title'>Publish Table</div>", unsafe_allow_html=True)
-if st.button("Finalize & Clean", use_container_width=True):
+if st.button("Push To Database", use_container_width=True):
     cur = conn.cursor()
     try:
         cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
@@ -516,6 +516,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
 
 
