@@ -36,13 +36,20 @@ st.markdown("""
 
 /* make buttons a bit bigger app-wide */
 .stButton > button {
-  font-size: 18px;                /* bump text */
-  padding: .6rem 1.1rem;          /* bigger click target */
+  font-size: 18px;
+  padding: .6rem 1.1rem;
   border-radius: 10px;
 }
 
-/* optional: tighten the uploader label spacing */
-.block-container {padding-top: 1.2rem;}
+/* GLOBAL: add whitespace on the left/right of the whole app */
+main .block-container{
+  padding-top: 1.2rem;                 /* what you had */
+  padding-left: min(6vw, 80px);        /* responsive side gutters */
+  padding-right: min(6vw, 80px);
+  /* OPTIONAL: also cap overall width for the entire app: */
+  max-width: 1200px;                   /* tweak to taste */
+  margin: 0 auto;                      /* center the capped width */
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -583,6 +590,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
