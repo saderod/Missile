@@ -59,7 +59,7 @@ st.markdown(
 
 /* Make ALL Streamlit buttons larger */
 .stButton > button{
-  font-size: 20px !important;
+  font-size: 24px !important;
   font-weight: 700 !important;
   padding: 0.9rem 1.4rem !important;
   border-radius: 12px !important;
@@ -496,3 +496,4 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
 
 # CLOSE the shared wrapper
 st.markdown("</div>", unsafe_allow_html=True)
+
