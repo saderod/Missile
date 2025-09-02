@@ -447,7 +447,7 @@ with bcol1:
             st.subheader("Missing Summary (STAGING)")
             st.dataframe(summary)
 with bcol2:
-    if st.button("Count & Fill Missing Values)", use_container_width=True):
+    if st.button("Count & Fill Missing Values", use_container_width=True):
         try:
             sdf = apply_imputations(conn, use_llm=True)
             st.success("Imputation completed. See tables below.")
@@ -516,6 +516,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
 
 
