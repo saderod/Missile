@@ -24,29 +24,26 @@ st.set_page_config(page_title="Missile AI Tool", layout="wide")
 # ---------- light styling helpers ----------
 st.markdown("""
 <style>
-/* centered *narrow* sections */
-.center-narrow {max-width: 760px; margin: 0 auto;}  /* was 900px */
+.center-narrow {max-width: 760px; margin: 0 auto;}  /* keep or tweak */
 
-/* section titles */
 .section-title{
   text-align:center; font-weight:800;
   font-size: clamp(28px, 4vw, 40px);
   line-height:1.15; margin: .4em 0 .6em;
 }
 
-/* bigger buttons */
 .stButton > button {
   font-size: 18px;
   padding: .6rem 1.1rem;
   border-radius: 10px;
 }
 
-/* GLOBAL: much wider side gutters + slightly smaller overall width cap */
+/* GLOBAL: double-wide side gutters */
 main .block-container{
   padding-top: 1.2rem;
-  padding-left: min(10vw, 140px);   /* was 6vw/80px */
-  padding-right: min(10vw, 140px);
-  max-width: 1040px;                /* was 1200px */
+  padding-left: min(20vw, 280px);   /* doubled */
+  padding-right: min(20vw, 280px);  /* doubled */
+  max-width: 1040px;                /* keep or adjust if you want even narrower */
   margin: 0 auto;
 }
 </style>
@@ -589,6 +586,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
