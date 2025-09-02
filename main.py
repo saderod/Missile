@@ -1,107 +1,92 @@
 # main.py
-# Streamlit + Snowflake (no AWS) — column-agnostic version
-# - Any CSV columns (sanitized to Snowflake-safe names)
-# - Light Pydantic validation (values: str|int|float|None)
-# - Write to Snowflake (drop/recreate RAW.STAGING per upload)
-# - Analyze nulls & (optionally) use Snowflake Cortex ensemble for imputations
-# - Show Summary + Cleaned; Publish to RAW.FINAL
+# Streamlit + Snowflake end-to-end demo.
+# - Upload CSV
+# - Validate with Pydantic
+# - Write to Snowflake
+# - Analyze nulls & (optionally) use Snowflake Cortex to pick imputation methods
+# - Apply imputations in a working table and show both Summary + Cleaned
 
+import os
 import typing as t
-import re
-import numpy as np
+
 import pandas as pd
 import streamlit as st
-from pydantic import RootModel
+from pydantic import BaseModel, field_validator
 
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
 from snowflake.snowpark import Session
 
-# ---------------- App config ----------------
+# ---------- App config ----------
+# ceates the page title and uses a full width layout
 st.set_page_config(page_title="Missile AI", layout="centered")
 
-# ---------------- Styling ----------------
+# ---------- UI styling and theme set up ----------
 st.markdown("""
 <style>
-/* Gradient background across the whole app */
-html, body, [data-testid="stAppViewContainer"] {
-  height: 100%;
-  background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 45%, #2a2a2a 100%) !important;
-  background-attachment: fixed;
-  color: #e5e7eb;
-}
-[data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stSidebar"] { background: rgba(0,0,0,0.35) !important; backdrop-filter: blur(2px); }
-[data-testid="block-container"]{ background: transparent !important; }
-
-/* Centered, narrow page width */
+/* Centered, narrow app container */
 [data-testid="block-container"]{
-  max-width: 960px !important;
+  max-width: 960px !important;   /* change this if you want the whole page wider/narrower */
   padding-left: 2rem !important;
   padding-right: 2rem !important;
   margin-left: auto !important;
   margin-right: auto !important;
 }
 
-/* Main title + subtitle */
-.h1-title { text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 8px; font-weight:900; }
-.subtitle  { text-align:center; font-size:20px; opacity:.9; margin-bottom: 20px; }
-
-/* Section titles like: Upload CSV / Analyze & Impute / etc */
+/* Section titles like: Upload CSV, Analyze & Impute, etc. */
 .section-title{
   text-align: center;
   font-weight: 900;
+  /* Bigger: grows a bit on larger screens */
   font-size: clamp(28px, 3.2vw, 40px);
   line-height: 1.12;
   letter-spacing: .2px;
-  margin: 28px 0 12px;
+  margin: .6rem 0 .5rem;
 }
 
-/* Bigger buttons (supports newer & older Streamlit selectors) */
-.stButton > button,
-button[kind="primary"],
-button[data-testid="baseButton-secondary"],
-button[data-testid="baseButton-primary"]{
-  font-size: 20px !important;
-  font-weight: 800 !important;
-  padding: 0.95rem 1.5rem !important;
+/* Make ALL Streamlit buttons larger (text + hit area) */
+.stButton > button{
+  font-size: 20px !important;          /* bigger button text */
+  font-weight: 700 !important;
+  padding: 0.9rem 1.4rem !important;   /* taller/wider buttons */
   border-radius: 12px !important;
 }
 
-/* Inputs on dark bg */
-.stTextInput input, .stNumberInput input, .stTextArea textarea,
-.stSelectbox > div > div, .stMultiSelect > div > div {
-  background-color: #111 !important;
-  color: #e5e7eb !important;
-  border: 1px solid #333 !important;
+/* File uploader tweaks: slightly bigger label & helper text */
+[data-testid="stFileUploader"] label{
+  font-size: 16px; 
+  font-weight: 600;
+}
+[data-testid="stFileUploader"] small{
+  font-size: 14px;
 }
 
-/* Dataframe headers tweak for dark theme */
-[data-testid="stDataFrame"] table thead th { background: #111 !important; }
+/* Optional: make Streamlit subheaders (st.subheader) a bit bigger */
+h3, .stMarkdown h3{
+  font-size: 28px;
+  line-height: 1.2;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- Snowflake targets ----------------
-DB   = "DEMO_DB"
-RAW  = "RAW"
+## set my variables for the DB/schema/tables
+DB = "DEMO_DB"
+RAW = "RAW"
 PROC = "PROC"
-
 STAGING = f"{DB}.{RAW}.STAGING"
 WORKING = f"{DB}.{PROC}.WORKING"
 SUMMARY = f"{DB}.{PROC}.SUMMARY"
 CLEANED = f"{DB}.{PROC}.CLEANED"
 
-# ---------------- Cortex ensemble settings ----------------
+# ---------- LLM settings (single model) ----------
 ALLOWED_METHODS = {"mean", "median", "mode", "constant", "drop"}
-_models = st.secrets.get("cortex_models", {})
-MODEL_A = _models.get("model_a", "mistral-large")
-MODEL_B = _models.get("model_b", "llama3-70b")
-MODEL_C = _models.get("model_c", "reka-flash")
-ARBITER_MODEL = _models.get("arbiter", "mistral-large")
+# You can set `st.secrets["cortex_models"]["model"]` to override
+SINGLE_MODEL = st.secrets.get("cortex_models", {}).get("model", "mistral-large")
 
-# ---------------- Connections ----------------
+# ---------- Helpers: connections ----------
 @st.cache_resource
 def get_connector():
+    """Snowflake Python connector connection (cached)."""
     cfg = st.secrets["snowflake"]
     conn = snowflake.connector.connect(
         account=str(cfg["account"]).strip(),
@@ -111,14 +96,17 @@ def get_connector():
         client_session_keep_alive=True,
     )
     cur = conn.cursor()
-    cur.execute(f"USE ROLE {cfg.get('role', 'APP_ROLE')}")
-    cur.execute(f"USE WAREHOUSE {cfg.get('warehouse', 'DEMO_WH')}")
-    cur.execute(f"USE DATABASE {cfg.get('database', DB)}")
-    cur.execute(f"USE SCHEMA {cfg.get('schema', RAW)}")
+    # set context after connect so errors are obvious
+    cur.execute(f"USE ROLE {st.secrets['snowflake'].get('role', 'APP_ROLE')}")
+    cur.execute(f"USE WAREHOUSE {st.secrets['snowflake'].get('warehouse', 'DEMO_WH')}")
+    cur.execute(f"USE DATABASE {st.secrets['snowflake'].get('database', DB)}")
+    cur.execute(f"USE SCHEMA {st.secrets['snowflake'].get('schema', RAW)}")
     return conn
 
+# create the SnowPark session ; needed to auto-create the Staging table to match the pandas DF
 @st.cache_resource
 def get_session():
+    """Snowpark Session (handy for auto_create_table on write_pandas)."""
     cfg = st.secrets["snowflake"]
     return Session.builder.configs(
         {
@@ -132,63 +120,60 @@ def get_session():
         }
     ).create()
 
-# ---------------- Column & validation helpers ----------------
-BasicScalar = t.Union[str, int, float, None]
+# ---------- Schema validation with Pydantic ----------
+# Adjust the model to your expected upload schema.
+# Here: ID (int), COL_A (str | None), COL_B (float | None)
 
-class AnyRow(RootModel[dict[str, BasicScalar]]):
-    """Pydantic v2 RootModel: row is {column: str|int|float|None}."""
-    pass
+# declaring the expected col and respective types
+class UploadRow(BaseModel):
+    ID: int
+    COL_A: t.Optional[str] = None
+    COL_B: t.Optional[float] = None
 
-_SAFE_START = re.compile(r'^[A-Za-z_]')
-_SAFE_CHARS = re.compile(r'[^A-Za-z0-9_]')
+# allows the cleaning of raw values before checking type
+    @field_validator("COL_A", mode="before")
+    def cast_str(cls, v):
+        if pd.isna(v):
+            return None
+        return str(v)
 
-def to_safe_identifier(col: t.Any) -> str:
-    """
-    Make a Snowflake-safe identifier from any column label.
-    - replace non-word chars with underscores
-    - ensure starts with letter/_; then UPPERCASE
-    """
-    s = str(col).strip()
-    s = _SAFE_CHARS.sub('_', s)
-    if not _SAFE_START.match(s):
-        s = f'_{s}'
-    return s.upper()
+def validate_df(df: pd.DataFrame) -> t.Tuple[bool, str]:
+    """Validate DataFrame rows against the UploadRow model."""
+    # enforces the exact columns from the expected tables
+    required_cols = {"ID", "COL_A", "COL_B"}
+    if set(map(str.upper, df.columns)) != required_cols:
+        return False, f"CSV columns must be exactly {sorted(required_cols)} (case-insensitive)."
 
-def sanitize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
-    mapping = {c: to_safe_identifier(c) for c in df.columns}
-    out = df.copy()
-    out.columns = [mapping[c] for c in df.columns]
-    return out, mapping
-
-def _as_basic_scalar(v: t.Any) -> BasicScalar:
-    """Coerce Pandas/Numpy scalars to plain Python types; NaN -> None."""
-    if pd.isna(v):
-        return None
-    if isinstance(v, (str, int, float)):
-        return v
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    if isinstance(v, (np.floating,)):
-        return float(v)
-    return str(v)
-
-def validate_df_generic(df: pd.DataFrame, sample_rows: int = 200) -> tuple[bool, str]:
-    """Light Pydantic check on a small sample of rows."""
+    df = df.copy()
+    df.columns = [c.upper() for c in df.columns]
     try:
-        for rec in df.head(sample_rows).to_dict(orient="records"):
-            clean = {k: _as_basic_scalar(v) for k, v in rec.items()}
-            AnyRow.model_validate(clean)
-        return True, "OK"
+        # Validate a small sample first for speed
+        sample = df.head(200)
+        for rec in sample.to_dict(orient="records"):
+            UploadRow(**rec)
     except Exception as e:
-        return False, f"Pydantic basic validation failed: {e}"
+        return False, f"Pydantic validation failed: {e}"
+    return True, "OK"
 
-# ---------------- Snowflake utilities ----------------
+# ---------- Snowflake Key Words utilities ----------
+# create the staging table if it not does not exist
 def ensure_objects(conn):
-    """Ensure schemas exist. Tables are created dynamically by the app."""
     cur = conn.cursor()
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB}.{RAW}")
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {DB}.{PROC}")
+    # Assume DB/SCHEMAs already exist (created by admin).
+    # Only create the working tables the app needs.
 
+    # RAW.STAGING (typed or generic; adjust to your CSV)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {DB}.{RAW}.STAGING (
+            ID NUMBER,
+            COL_A STRING,
+            COL_B FLOAT,
+            _LOAD_TS TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        )
+    """)
+
+# ---------- Analysis & Imputation ----------
+# grab the column names and column types
 def get_columns_and_types(conn) -> pd.DataFrame:
     sql = f"""
       SELECT COLUMN_NAME, DATA_TYPE
@@ -198,7 +183,9 @@ def get_columns_and_types(conn) -> pd.DataFrame:
     """
     return pd.read_sql(sql, conn)
 
+# count the IS NULL and calc a missing rate & create the Summary Table
 def build_missing_summary(conn) -> pd.DataFrame:
+    """Compute missing counts per column from STAGING."""
     cols = get_columns_and_types(conn)
     if cols.empty:
         return pd.DataFrame(columns=["COLUMN_NAME", "TOTAL_ROWS", "MISSING_COUNT", "MISSING_RATE"])
@@ -208,28 +195,46 @@ def build_missing_summary(conn) -> pd.DataFrame:
     rows = []
     for _, r in cols.iterrows():
         col = r["COLUMN_NAME"]
-        miss = cur.execute(f"SELECT COUNT(*) FROM {STAGING} WHERE {col} IS NULL").fetchone()[0]
+        miss = cur.execute(
+            f"SELECT COUNT(*) FROM {STAGING} WHERE {col} IS NULL"
+        ).fetchone()[0]
         rate = (miss / total) if total else 0
         rows.append([col, total, miss, rate])
     return pd.DataFrame(rows, columns=["COLUMN_NAME", "TOTAL_ROWS", "MISSING_COUNT", "MISSING_RATE"])
 
+# --- Single-model Cortex helper ---
 def _llm_complete(conn, model: str, prompt: str) -> str:
-    """Try AI_COMPLETE first; fall back to SNOWFLAKE.CORTEX.COMPLETE."""
+    """
+    Try AI_COMPLETE first; if not available in the account, try SNOWFLAKE.CORTEX.COMPLETE.
+    Returns raw text response.
+    """
+    # Attempt AI_COMPLETE(model => ..., prompt => ...)
     try:
         df = pd.read_sql(
             "SELECT AI_COMPLETE(model => %s, prompt => %s) AS RESP",
-            conn, params=[model, prompt],
+            conn,
+            params=[model, prompt],
         )
         return str(df.iloc[0, 0]).strip()
     except Exception:
         pass
-    df = pd.read_sql(
-        "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS RESP",
-        conn, params=[model, prompt],
-    )
-    return str(df.iloc[0, 0]).strip()
+
+    # Attempt SNOWFLAKE.CORTEX.COMPLETE(model, prompt)
+    try:
+        df = pd.read_sql(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS RESP",
+            conn,
+            params=[model, prompt],
+        )
+        return str(df.iloc[0, 0]).strip()
+    except Exception as e:
+        raise e
 
 def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
+    """
+    Normalize any LLM response to one of ALLOWED_METHODS.
+    Accepts extra words like 'Use median.' and pulls the keyword out.
+    """
     if not text:
         return None
     tkn = str(text).strip().lower()
@@ -238,55 +243,42 @@ def _normalize_method(text: t.Optional[str]) -> t.Optional[str]:
             return m
     return None
 
-def pick_method_ensemble(conn, col_name: str, miss: int, dtype: str) -> tuple[str, str, str]:
-    base_prompt = (
-        "Pick the best single-word imputation method for a column with missing values. "
-        f"Allowed: {', '.join(sorted(ALLOWED_METHODS))}. "
+def pick_method_llm(conn, col_name: str, miss: int, dtype: str) -> str:
+    """
+    Ask ONE Cortex model for an imputation method.
+    Falls back to a simple heuristic if the call fails or returns junk.
+    """
+    prompt = (
+        "Return ONE word for the best imputation method for a column with missing values. "
+        f"Allowed words: {', '.join(sorted(ALLOWED_METHODS))}. "
         f"Column={col_name}, Missing={miss}, Type={dtype}. "
-        "Return ONLY the one word."
+        "Answer with ONE word only."
     )
-    votes: list[tuple[str, t.Optional[str]]] = []
-    for model in [MODEL_A, MODEL_B, MODEL_C]:
-        try:
-            raw = _llm_complete(conn, model, base_prompt)
-            votes.append((model, _normalize_method(raw)))
-        except Exception:
-            votes.append((model, None))
-
-    counts: dict[str, int] = {}
-    for _, v in votes:
-        if v:
-            counts[v] = counts.get(v, 0) + 1
-
-    if counts:
-        best, n = max(counts.items(), key=lambda kv: kv[1])
-        if n >= 2:
-            return best, f"ensemble-mode:{n}", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
-
-    # Arbiter
     try:
-        vote_str = ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
-        arb_prompt = (
-            "You are the judge. Choose the single best imputation method. "
-            f"Allowed: {', '.join(sorted(ALLOWED_METHODS))}. "
-            f"Column={col_name}, Missing={miss}, Type={dtype}. "
-            f"Model votes: {vote_str}. Return ONLY the chosen word."
-        )
-        arb = _normalize_method(_llm_complete(conn, ARBITER_MODEL, arb_prompt))
-        if arb:
-            return arb, f"arbiter:{ARBITER_MODEL}", vote_str
+        raw = _llm_complete(conn, SINGLE_MODEL, prompt)
+        m = _normalize_method(raw)
+        if m:
+            return m
     except Exception:
         pass
 
-    # Fallback heuristic
+    # fallback heuristic
     if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
-        return "median", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
-    return "mode", "heuristic", ", ".join([f"{m}:{v or 'none'}" for m, v in votes])
+        return "median"
+    return "mode"
 
+# creates a table with the imputations applied of the uploaded table
 def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
+    """
+    Create working table and impute nulls column-by-column.
+    If use_llm=True, pick imputation via the single Cortex model.
+    Returns a summary DataFrame with chosen methods.
+    """
+    # fresh working copy
     cur = conn.cursor()
     cur.execute(f"CREATE OR REPLACE TABLE {WORKING} AS SELECT * FROM {STAGING}")
 
+    # columns/types from STAGING
     cols = pd.read_sql(
         f"""
         SELECT COLUMN_NAME, DATA_TYPE
@@ -294,25 +286,28 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
         WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'STAGING'
         ORDER BY ORDINAL_POSITION
         """,
-        conn, params=[RAW],
+        conn,
+        params=[RAW],
     )
 
     summary_rows = []
+
     for _, r in cols.iterrows():
         col = r["COLUMN_NAME"]
         dtype = r["DATA_TYPE"]
+
+        # how many are missing?
         miss = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
         if miss == 0:
-            summary_rows.append([col, miss, 0.0, "none", "none", ""])
+            summary_rows.append([col, miss, 0.0, "none"])
             continue
 
         if use_llm:
-            method, source, votes = pick_method_ensemble(conn, col, miss, dtype)
+            method = pick_method_llm(conn, col, miss, dtype)
         else:
             method = "median" if any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]) else "mode"
-            source = "heuristic"
-            votes = ""
 
+        # ---- apply the chosen method ----
         if method == "drop":
             cur.execute(f"DELETE FROM {WORKING} WHERE {col} IS NULL")
         elif method in {"mean", "median"} and any(x in dtype for x in ["NUMBER", "FLOAT", "INT", "DECIMAL", "DOUBLE"]):
@@ -335,18 +330,23 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
         elif method == "constant":
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
         else:
+            # safety net
             cur.execute(f"UPDATE {WORKING} SET {col} = 'UNKNOWN' WHERE {col} IS NULL")
 
+        # recompute rate after imputation
         total_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING}").fetchone()[0]
         missing_after = cur.execute(f"SELECT COUNT(*) FROM {WORKING} WHERE {col} IS NULL").fetchone()[0]
         rate_after = (missing_after / total_after) if total_after else 0.0
-        summary_rows.append([col, miss, rate_after, method, source, votes])
 
+        summary_rows.append([col, miss, rate_after, method])
+
+    # save cleaned table
     cur.execute(f"CREATE OR REPLACE TABLE {CLEANED} AS SELECT * FROM {WORKING}")
 
+    # write summary
     sdf = pd.DataFrame(
         summary_rows,
-        columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD", "SOURCE", "VOTES"],
+        columns=["COLUMN_NAME", "MISSING_BEFORE", "MISSING_RATE_AFTER", "IMPUTATION_METHOD"],
     )
     cur.execute(
         f"""
@@ -354,85 +354,72 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
           COLUMN_NAME STRING,
           MISSING_BEFORE NUMBER,
           MISSING_RATE_AFTER FLOAT,
-          IMPUTATION_METHOD STRING,
-          SOURCE STRING,
-          VOTES STRING
+          IMPUTATION_METHOD STRING
         )
         """
     )
     write_pandas(conn, sdf, table_name="SUMMARY", database=DB, schema=PROC, quote_identifiers=False)
+
     return sdf
 
-# ---------------- UI ----------------
-# Title
-st.markdown("<div class='h1-title'>Missile AI</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>AI powered app that fills in missing data in a table</div>", unsafe_allow_html=True)
+###### ---------- UI ----------
 
-# Watch Tutorial button -> toggle embedded video inline
-if "show_tutorial" not in st.session_state:
-    st.session_state["show_tutorial"] = False
+## title text and centering it
+st.markdown(
+    "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 48px;'>Missile AI</h1>",
+    unsafe_allow_html=True,
+)
 
-if st.button("📺 Watch Tutorial", use_container_width=True):
-    st.session_state["show_tutorial"] = not st.session_state["show_tutorial"]
-
-if st.session_state["show_tutorial"]:
-    st.video("https://youtu.be/YBxv84lqPFs?si=c3rtTZFo_aZ85exH")
-
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
-st.markdown("<div style='height: 48px'></div>", unsafe_allow_html=True)
 conn = get_connector()
 ensure_objects(conn)
 
-# ---- Upload CSV (arbitrary columns) ----
+## upload CSV process
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Upload CSV</div>", unsafe_allow_html=True)
-uploaded = st.file_uploader("", type=["csv"])  # empty label; we render our own title
+
+uploaded = st.file_uploader("", type=["csv"])  # empty label; we use our own title
 df_uploaded: t.Optional[pd.DataFrame] = None
 
 if uploaded:
-    raw_df = pd.read_csv(uploaded)
-    df_uploaded, name_map = sanitize_columns(raw_df)
-
-    # Show any renames to the user
-    renamed = {orig: safe for orig, safe in name_map.items() if orig != safe}
-    if renamed:
-        st.info(
-            "Some column names were adjusted to be Snowflake-safe identifiers:\n\n" +
-            "\n".join([f"- **{o}** → `{s}`" for o, s in renamed.items()])
-        )
-
+    df_uploaded = pd.read_csv(uploaded)
     st.subheader("Preview:")
     st.dataframe(df_uploaded.head())
 
-    ok, msg = validate_df_generic(df_uploaded)
+    ok, msg = validate_df(df_uploaded)
     if ok:
-        st.success("Pydantic (basic) validation: OK")
+        st.success("Pydantic validation: OK")
     else:
         st.error(msg)
 
     if ok and st.button("Upload to Snowflake (STAGING)", use_container_width=True):
-        cur = conn.cursor()
-        cur.execute(f"DROP TABLE IF EXISTS {STAGING}")
+        # normalize column names to match STAGING
+        df_to_write = df_uploaded.copy()
+        df_to_write.columns = [c.upper() for c in df_to_write.columns]
 
+        # easiest: let Snowpark auto-create (in case STAGING was adjusted)
         session = get_session()
         session.write_pandas(
-            df_uploaded,
+            df_to_write,
             table_name="STAGING",
             database=DB,
             schema=RAW,
             auto_create_table=True,
             overwrite=False,
         )
-        st.success(f"Uploaded {len(df_uploaded):,} rows into {STAGING}")
+        st.success(f"Uploaded {len(df_to_write):,} rows into {STAGING}")
 
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
-# ---- Analyze & Impute ----
-st.markdown("<div class='section-title'>Analyze & Fill Data</div>", unsafe_allow_html=True)
+### Analysis and Imputation buttons
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Analyze & Impute</div>", unsafe_allow_html=True)
+
+# two buttons side-by-side, centered by the narrow container
 bcol1, bcol2 = st.columns(2, gap="large")
 
 with bcol1:
-    if st.button("Count Missing Values", use_container_width=True):
+    if st.button("Analyze Missing (no LLM)", use_container_width=True):
         summary = build_missing_summary(conn)
         if summary.empty:
             st.warning("STAGING is empty.")
@@ -441,7 +428,7 @@ with bcol1:
             st.dataframe(summary)
 
 with bcol2:
-    if st.button("Count & Fill Missing Values", use_container_width=True):
+    if st.button("Analyze + Impute (use Cortex if available)", use_container_width=True):
         try:
             sdf = apply_imputations(conn, use_llm=True)
             st.success("Imputation completed. See tables below.")
@@ -451,10 +438,13 @@ with bcol2:
             st.error("Imputation failed.")
             st.exception(e)
 
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
-# ---- Preview Tables ----
+## Show results / show tables section
 st.markdown("<div class='section-title'>Preview Table and Action Summary</div>", unsafe_allow_html=True)
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+
 if st.button("View Tables", use_container_width=True):
     try:
         st.subheader("SUMMARY (PROC.SUMMARY)")
@@ -474,18 +464,28 @@ if st.button("View Tables", use_container_width=True):
         st.error("Could not fetch tables.")
         st.exception(e)
 
+st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
 
-# ---- Finish ----
-st.markdown("<div class='section-title'>Publish Table</div>", unsafe_allow_html=True)
-if st.button("Push To Database", use_container_width=True):
+### Finalize or cleanup
+st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
+
+# One-click publish: finalize & clean PROC artifacts
+if st.button("Publish (Finalize & Clean)", use_container_width=True):
     cur = conn.cursor()
     try:
+        # Ensure CLEANED exists (user must have run an Impute step)
         cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
+
+        # Finalize: promote CLEANED to RAW.FINAL
         cur.execute(f"CREATE OR REPLACE TABLE {DB}.{RAW}.FINAL AS SELECT * FROM {CLEANED}")
+
+        # Clean: drop working PROC tables
         cur.execute(f"DROP TABLE IF EXISTS {SUMMARY}")
         cur.execute(f"DROP TABLE IF EXISTS {WORKING}")
         cur.execute(f"DROP TABLE IF EXISTS {CLEANED}")
+
         st.success(f"Published to {DB}.{RAW}.FINAL and cleaned PROC tables.")
     except snowflake.connector.errors.ProgrammingError as e:
         st.error(
@@ -497,6 +497,7 @@ if st.button("Push To Database", use_container_width=True):
         st.error("Publish failed.")
         st.exception(e)
 
+# Small advanced expander for rare “start fresh” need
 with st.expander("Advanced: Reset Pipeline (danger)"):
     st.caption("Drops PROC tables and empties RAW.STAGING so you can upload a fresh CSV.")
     if st.button("Reset Pipeline"):
@@ -511,7 +512,4 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.error("Reset failed.")
             st.exception(e)
 
-
-
-
-
+st.markdown("</div>", unsafe_allow_html=True)
