@@ -19,24 +19,35 @@ from snowflake.snowpark import Session
 
 # ---------- App config ----------
 # ceates the page title and uses a full width layout
-st.set_page_config(page_title="Missile AI Tool", layout="wide")
+st.set_page_config(page_title="Missile AI", layout="centered")
 
 # ---------- light styling helpers ----------
 st.markdown("""
 <style>
-/* keep your other rules as-is... */
+/* Streamlit 1.20+ uses this test id for the main block container */
+[data-testid="block-container"]{
+  max-width: 960px !important;  /* <= tweak this number to compress more or less */
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
 
-/* GLOBAL: quadruple-wide side gutters */
-main .block-container{
-  padding-top: 1.2rem;
-  padding-left: min(40vw, 560px);   /* was 10vw→20vw; now 40vw (or 560px cap) */
-  padding-right: min(40vw, 560px);
-  max-width: 960px;                 /* optional cap; tweak or remove */
-  margin: 0 auto;
+/* Optional: make it even tighter on very large screens */
+@media (min-width: 1600px){
+  [data-testid="block-container"]{ max-width: 880px !important; }
+}
+
+/* Optional: allow more breathing room on tablets/phones */
+@media (max-width: 1200px){
+  [data-testid="block-container"]{
+    max-width: 90% !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
-
 
 ## set my variables for the DB/schema/tables
 DB = "DEMO_DB"
@@ -574,6 +585,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
