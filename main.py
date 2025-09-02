@@ -38,10 +38,10 @@ st.markdown("""
   text-align: center;
   font-weight: 900;
   /* Bigger: grows a bit on larger screens */
-  font-size: clamp(36px, 5vw, 56px);
+  font-size: clamp(28px, 3.2vw, 40px);
   line-height: 1.12;
   letter-spacing: .2px;
-  margin: 1.0rem 0 .8rem;
+  margin: .6rem 0 .5rem;
 }
 
 /* Make ALL Streamlit buttons larger (text + hit area) */
@@ -607,6 +607,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
