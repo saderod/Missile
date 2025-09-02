@@ -436,10 +436,10 @@ if uploaded:
 st.divider()
 
 # Analyze & Impute
-st.markdown("<div class='section-title'>Analyze & Impute</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Analyze & Fill Table</div>", unsafe_allow_html=True)
 bcol1, bcol2 = st.columns(2, gap="large")
 with bcol1:
-    if st.button("Analyze Missing (no LLM)", use_container_width=True):
+    if st.button("Count Missing Values Only", use_container_width=True):
         summary = build_missing_summary(conn)
         if summary.empty:
             st.warning("STAGING is empty.")
@@ -447,7 +447,7 @@ with bcol1:
             st.subheader("Missing Summary (STAGING)")
             st.dataframe(summary)
 with bcol2:
-    if st.button("Analyze + Impute (use Cortex if available)", use_container_width=True):
+    if st.button("Count & Fill Missing Values)", use_container_width=True):
         try:
             sdf = apply_imputations(conn, use_llm=True)
             st.success("Imputation completed. See tables below.")
@@ -483,8 +483,8 @@ if st.button("View Tables", use_container_width=True):
 st.divider()
 
 # Finish
-st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
-if st.button("Publish (Finalize & Clean)", use_container_width=True):
+st.markdown("<div class='section-title'>Publish Table</div>", unsafe_allow_html=True)
+if st.button("Finalize & Clean", use_container_width=True):
     cur = conn.cursor()
     try:
         cur.execute(f"SELECT 1 FROM {CLEANED} LIMIT 1")
@@ -516,6 +516,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
         except Exception as e:
             st.error("Reset failed.")
             st.exception(e)
+
 
 
 
