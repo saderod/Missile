@@ -12,6 +12,7 @@ import typing as t
 import pandas as pd
 import streamlit as st
 from pydantic import BaseModel, field_validator
+import re
 
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
@@ -124,53 +125,73 @@ def get_session():
 # Adjust the model to your expected upload schema.
 # Here: ID (int), COL_A (str | None), COL_B (float | None)
 
-# declaring the expected col and respective types
-class UploadRow(BaseModel):
-    ID: int
-    COL_A: t.Optional[str] = None
-    COL_B: t.Optional[float] = None
+def _sf_identifier(name: str) -> str:
+    """Make a Snowflake-safe identifier: UPPERCASE, only letters/digits/_ and unique."""
+    s = re.sub(r'[^0-9A-Za-z_]+', '_', str(name).strip())
+    if re.match(r'^[0-9]', s):  # identifier can't start with a digit
+        s = "_" + s
+    return s.upper()
 
-# allows the cleaning of raw values before checking type
-    @field_validator("COL_A", mode="before")
-    def cast_str(cls, v):
-        if pd.isna(v):
-            return None
-        return str(v)
+def _sf_type_from_dtype(dtype) -> str:
+    import pandas as pd
+    from pandas.api import types as ptypes
+    if ptypes.is_integer_dtype(dtype):
+        return "NUMBER"
+    if ptypes.is_float_dtype(dtype):
+        return "FLOAT"
+    if ptypes.is_bool_dtype(dtype):
+        return "BOOLEAN"
+    if ptypes.is_datetime64_any_dtype(dtype):
+        return "TIMESTAMP_NTZ"
+    return "TEXT"  # fallback for strings/mixed
 
-def validate_df(df: pd.DataFrame) -> t.Tuple[bool, str]:
-    """Validate DataFrame rows against the UploadRow model."""
-    # enforces the exact columns from the expected tables
-    required_cols = {"ID", "COL_A", "COL_B"}
-    if set(map(str.upper, df.columns)) != required_cols:
-        return False, f"CSV columns must be exactly {sorted(required_cols)} (case-insensitive)."
+def validate_df_any(df: pd.DataFrame) -> tuple[bool, str, pd.DataFrame, list[tuple[str, str]]]:
+    """
+    Permissive check:
+    - not empty
+    - unique, Snowflake-safe column names (we'll rename if needed)
+    - cells are scalars (no lists/dicts)
+    Returns (ok, msg, cleaned_df, renames).
+    """
+    if df is None or df.empty:
+        return False, "CSV is empty.", df, []
 
-    df = df.copy()
-    df.columns = [c.upper() for c in df.columns]
-    try:
-        # Validate a small sample first for speed
-        sample = df.head(200)
-        for rec in sample.to_dict(orient="records"):
-            UploadRow(**rec)
-    except Exception as e:
-        return False, f"Pydantic validation failed: {e}"
-    return True, "OK"
+    clean = df.copy()
+    original = list(clean.columns)
+
+    # sanitize and make unique
+    new_cols, seen, renames = [], set(), []
+    for col in original:
+        nc = _sf_identifier(col)
+        base = nc
+        i = 1
+        while nc in seen:
+            i += 1
+            nc = f"{base}_{i}"
+        seen.add(nc)
+        new_cols.append(nc)
+        if str(col) != nc:
+            renames.append((str(col), nc))
+    clean.columns = new_cols
+
+    # basic "pydantic-like" scalar check on a sample
+    for v in clean.head(200).to_numpy().flatten():
+        if isinstance(v, (list, dict, set, tuple)):
+            return False, "Cells must be text/numbers/booleans/timestamps (no arrays/objects).", clean, renames
+
+    return True, "OK", clean, renames
+
+def create_or_replace_staging_for_df(conn, df: pd.DataFrame, full_table: str):
+    """Generate DDL to match the DataFrame and CREATE OR REPLACE the STAGING table."""
+    cols = [f'{c} {_sf_type_from_dtype(df[c].dtype)}' for c in df.columns]
+    ddl = ", ".join(cols)
+    cur = conn.cursor()
+    cur.execute(f"CREATE OR REPLACE TABLE {full_table} ({ddl})")
 
 # ---------- Snowflake Key Words utilities ----------
 # create the staging table if it not does not exist
 def ensure_objects(conn):
-    cur = conn.cursor()
-    # Assume DB/SCHEMAs already exist (created by admin).
-    # Only create the working tables the app needs.
-
-    # RAW.STAGING (typed or generic; adjust to your CSV)
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {DB}.{RAW}.STAGING (
-            ID NUMBER,
-            COL_A STRING,
-            COL_B FLOAT,
-            _LOAD_TS TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-        )
-    """)
+  return
 
 # ---------- Analysis & Imputation ----------
 # grab the column names and column types
@@ -417,36 +438,37 @@ ensure_objects(conn)
 st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
 st.markdown("<div class='section-title'>Upload CSV</div>", unsafe_allow_html=True)
 
-uploaded = st.file_uploader("", type=["csv"])  # empty label; we use our own title
-df_uploaded: t.Optional[pd.DataFrame] = None
-
+uploaded = st.file_uploader("", type=["csv"])  # label is above in your title
 if uploaded:
-    df_uploaded = pd.read_csv(uploaded)
-    st.subheader("Preview:")
-    st.dataframe(df_uploaded.head())
+    raw_df = pd.read_csv(uploaded)
 
-    ok, msg = validate_df(df_uploaded)
+    ok, msg, df_clean, renames = validate_df_any(raw_df)
+
+    st.subheader("Preview:")
+    st.dataframe(df_clean.head())
+
+    if renames:
+        st.caption("Renamed for Snowflake: " + ", ".join([f"{a} → {b}" for a, b in renames]))
+
     if ok:
-        st.success("Pydantic validation: OK")
+        st.success("Basic validation: OK")
+        if st.button("Upload to Snowflake (STAGING)", use_container_width=True):
+            # Build STAGING to match the CSV
+            create_or_replace_staging_for_df(conn, df_clean, STAGING)
+
+            # Load data (quote_identifiers=True since our cols may not be bare keywords)
+            write_pandas(
+                conn,
+                df_clean,
+                table_name="STAGING",
+                database=DB,
+                schema=RAW,
+                quote_identifiers=True,
+                overwrite=True,  # replace data on re-upload
+            )
+            st.success(f"Uploaded {len(df_clean):,} rows into {STAGING}")
     else:
         st.error(msg)
-
-    if ok and st.button("Upload to Snowflake (STAGING)", use_container_width=True):
-        # normalize column names to match STAGING
-        df_to_write = df_uploaded.copy()
-        df_to_write.columns = [c.upper() for c in df_to_write.columns]
-
-        # easiest: let Snowpark auto-create (in case STAGING was adjusted)
-        session = get_session()
-        session.write_pandas(
-            df_to_write,
-            table_name="STAGING",
-            database=DB,
-            schema=RAW,
-            auto_create_table=True,
-            overwrite=False,
-        )
-        st.success(f"Uploaded {len(df_to_write):,} rows into {STAGING}")
 
 st.markdown("</div>", unsafe_allow_html=True)  # close center-narrow
 st.divider()
@@ -553,5 +575,6 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
