@@ -648,10 +648,11 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ###### ---------- UI ----------
 
-st.markdown(
-    "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 8px;'>Missile AI</h1>",
-    unsafe_allow_html=True,
-)
+# st.markdown(
+#     "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 8px;'>Missile AI</h1>",
+#     unsafe_allow_html=True,
+# )
+st.markdown("<h1 class='hero-title'>Missile AI</h1>", unsafe_allow_html=True)
 st.markdown(
     "<p class='subtitle'>AI powered app that fills in missing data in tables</p>",
     unsafe_allow_html=True,
@@ -855,6 +856,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
