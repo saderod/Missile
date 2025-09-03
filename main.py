@@ -144,6 +144,43 @@ h3, .stMarkdown h3{
   /* subtle glow for dark backgrounds */
   text-shadow: 0 0 14px rgba(245, 158, 11, 0.15);
 }
+
+/* --- Brand colors (match your title gradient) --- */
+:root{
+  --brand-yellow: #f59e0b;   /* main */
+  --brand-yellow-600: #d97706;/* darker for active border */
+  --brand-yellow-100: #fde68a;/* pale for hover fill */
+}
+
+/* Make ALL Streamlit buttons use a yellow outline */
+.stButton > button{
+  border: 2px solid var(--brand-yellow) !important;
+  background: transparent !important;           /* outline style */
+  color: var(--brand-yellow) !important;        /* button text */
+  font-weight: 700 !important;
+  padding: 0.9rem 1.4rem !important;
+  border-radius: 12px !important;
+  transition: background .15s ease, box-shadow .15s ease, transform .02s ease;
+}
+
+/* Hover: faint yellow wash + soft glow */
+.stButton > button:hover{
+  background: rgba(245,158,11,0.10) !important; /* ~10% yellow */
+  box-shadow: 0 0 0 4px rgba(245,158,11,0.15) !important;
+}
+
+/* Focus/active: stronger border & ring */
+.stButton > button:focus,
+.stButton > button:active{
+  border-color: var(--brand-yellow-600) !important;
+  box-shadow: 0 0 0 4px rgba(245,158,11,0.25) !important;
+}
+
+/* Disabled state still on brand but subdued */
+.stButton > button:disabled{
+  border-color: rgba(245,158,11,0.45) !important;
+  color: rgba(245,158,11,0.55) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -855,6 +892,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
