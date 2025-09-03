@@ -653,7 +653,7 @@ if st.session_state.show_tutorial:
         <div class="video-wrap">
           <div class="video-16x9">
             <iframe
-              src="https://www.youtube.com/embed/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1"
+              src="https://youtu.be/krCbTpvFqEs"
               title="YouTube video player"
               frameborder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -814,6 +814,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
