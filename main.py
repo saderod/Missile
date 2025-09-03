@@ -624,13 +624,13 @@ st.divider()
 
 ### Analysis and Imputation buttons
 st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
-st.markdown("<div class='section-title'>Analyze & Impute</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Analyze & Fill Data</div>", unsafe_allow_html=True)
 
 # two buttons side-by-side, centered by the narrow container
 bcol1, bcol2 = st.columns(2, gap="large")
 
 with bcol1:
-    if st.button("Analyze Missing (no LLM)", use_container_width=True):
+    if st.button("Count Missing Data", use_container_width=True):
         summary = build_missing_summary(conn)
         if summary.empty:
             st.warning("STAGING is empty.")
@@ -639,7 +639,7 @@ with bcol1:
             st.dataframe(summary)
 
 with bcol2:
-    if st.button("Analyze + Impute (use Cortex if available)", use_container_width=True):
+    if st.button("Count & Fill Missing Data", use_container_width=True):
         try:
             sdf = apply_imputations(conn, use_llm=True)
             st.success("Imputation completed. See tables below.")
@@ -680,10 +680,10 @@ st.divider()
 
 ### Finalize or cleanup
 st.markdown("<div class='center-narrow'>", unsafe_allow_html=True)
-st.markdown("<div class='section-title'>Finish</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>Publish Table</div>", unsafe_allow_html=True)
 
 # One-click publish: finalize & clean PROC artifacts
-if st.button("Publish (Finalize & Clean)", use_container_width=True):
+if st.button("Push To Database", use_container_width=True):
     cur = conn.cursor()
     try:
         # Ensure CLEANED exists (user must have run an Impute step)
@@ -724,6 +724,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
