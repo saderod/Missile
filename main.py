@@ -355,7 +355,7 @@ def choose_methods_llm_bulk(conn, profile_df: pd.DataFrame, model: str | None = 
     """
     if model is None:
         # single-model path (fast) – reuse whatever you configured as your primary model
-        model = MODEL_A
+        model = SINGLE_MODEL
 
     # Keep only columns that have missing values; cap to keep prompt small/fast
     prof = profile_df.copy()
@@ -501,7 +501,7 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
     llm_plan: dict[str, str] = {}
     if use_llm:
         try:
-            llm_plan = choose_methods_llm_bulk(conn, profile)  # {COL -> method}
+            llm_plan = choose_methods_llm_bulk(conn, profile, model=SINGLE_MODEL)  # {COL -> method}
         except Exception:
             llm_plan = {}
 
@@ -820,6 +820,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
