@@ -123,7 +123,7 @@ h3, .stMarkdown h3{
   backdrop-filter: none !important;
 }
 
-/* Gradient title text */
+/* Gradient title text: white → warm yellow */
 .hero-title{
   text-align:center;
   font-weight:900;
@@ -131,19 +131,18 @@ h3, .stMarkdown h3{
   line-height:1.06;
   letter-spacing:.5px;
 
-  /* gradient colors — tweak to taste */
   background: linear-gradient(90deg,
-    #a78bfa 0%,
-    #60a5fa 30%,
-    #34d399 65%,
-    #f472b6 100%);
+    #ffffff 0%,
+    #fff6cc 30%,
+    #fde68a 60%,
+    #f59e0b 100%);         /* light → medium yellow */
   -webkit-background-clip: text;
   background-clip: text;
-  -webkit-text-fill-color: transparent; /* Safari */
-  color: transparent;                   /* others */
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 
-  /* optional: subtle glow for dark backgrounds */
-  text-shadow: 0 0 12px rgba(255,255,255,0.05);
+  /* subtle glow for dark backgrounds */
+  text-shadow: 0 0 14px rgba(245, 158, 11, 0.15);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -856,6 +855,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
