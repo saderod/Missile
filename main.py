@@ -82,6 +82,20 @@ h3, .stMarkdown h3{
   margin:-4px 0 10px;   /* tight to the title */
 }
 .spacer-xxl{ height: 72px; }  /* “good chunk” of space */
+
+/* Big responsive video */
+.video-wrap{
+  display:flex; justify-content:center; margin: 14px auto 0;
+}
+.video-16x9{
+  width:100%; max-width: 980px; aspect-ratio: 16 / 9;
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+.video-16x9 iframe{ width:100%; height:100%; border:0; }
+
+/* Larger gap before the CSV section */
+.spacer-hero{ height: 110px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -595,21 +609,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Center the button; toggle embed on click
+# Keep a toggle if you still want the button; otherwise set to True to always show
 if "show_tutorial" not in st.session_state:
-    st.session_state.show_tutorial = False
+    st.session_state.show_tutorial = True   # show by default (no extra click)
 
-center_left, center, center_right = st.columns([1, 2, 1])
-with center:
+center_l, center_c, center_r = st.columns([1,2,1])
+with center_c:
     if st.button("Watch Tutorial", use_container_width=True):
-        st.session_state.show_tutorial = not st.session_state.show_tutorial
+        st.session_state.show_tutorial = True
 
     if st.session_state.show_tutorial:
-        # Streamlit embeds YouTube inline; no navigation away
-        st.video("https://youtu.be/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1")
+        # Big 16:9 embed; no expand needed
+        st.markdown(
+            """
+            <div class="video-wrap">
+              <div class="video-16x9">
+                <iframe
+                  src="https://www.youtube.com/embed/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1"
+                  title="YouTube video player"
+                  frameborder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowfullscreen
+                ></iframe>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-# Big gap before the next section
-st.markdown("<div class='spacer-xxl'></div>", unsafe_allow_html=True)
+# Extra space before the CSV section
+st.markdown("<div class='spacer-hero'></div>", unsafe_allow_html=True)
 
 
 
@@ -757,6 +786,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
