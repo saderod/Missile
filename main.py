@@ -641,7 +641,7 @@ st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 # ---- Tutorial (toggle + looping embed that never reaches the end) ----
 VIDEO_ID = "krCbTpvFqEs"          
 START_AT = 0                      
-END_AT   = 285
+END_AT   = 143
 
 # build a privacy-friendly embed that loops between START_AT and END_AT
 yt_src = (
@@ -664,21 +664,17 @@ st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
 # only render the video when toggled on
 if st.session_state.show_tutorial:
-    st.markdown(
-        f"""
-        <div class="video-wrap">
-          <div class="video-16x9">
-            <iframe
-              src={yt_src}
-              title="Tutorial"
-              allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowfullscreen
-            ></iframe>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        st.markdown(
+            f"""
+            <div class="video-16x9" style="margin:0 auto; max-width:980px; border-radius:12px; overflow:hidden;
+                 box-shadow:0 10px 30px rgba(0,0,0,.35)">
+              <iframe src={yt_src} title="Tutorial"
+                allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     # smaller "Hide" button to collapse, keeps the main label fixed
     # hide_l, hide_c, hide_r = st.columns([1,1,1])
     # with hide_c:
@@ -834,6 +830,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
