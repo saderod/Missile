@@ -599,7 +599,6 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ###### ---------- UI ----------
 
-## title text and centering it
 st.markdown(
     "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 8px;'>Missile AI</h1>",
     unsafe_allow_html=True,
@@ -609,35 +608,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Keep a toggle if you still want the button; otherwise set to True to always show
+# ------- Show/Hide Tutorial Video -------
+# default: hidden
 if "show_tutorial" not in st.session_state:
-    st.session_state.show_tutorial = True   # show by default (no extra click)
+    st.session_state.show_tutorial = False
 
-center_l, center_c, center_r = st.columns([1,2,1])
-with center_c:
-    if st.button("Watch Tutorial", use_container_width=True):
-        st.session_state.show_tutorial = True
+# centered button; toggles visibility
+c1, c2, c3 = st.columns([1,2,1])
+with c2:
+    btn_label = "Watch Tutorial" if not st.session_state.show_tutorial else "Hide Tutorial"
+    if st.button(btn_label, use_container_width=True):
+        st.session_state.show_tutorial = not st.session_state.show_tutorial
 
-    if st.session_state.show_tutorial:
-        # Big 16:9 embed; no expand needed
-        st.markdown(
-            """
-            <div class="video-wrap">
-              <div class="video-16x9">
-                <iframe
-                  src="https://www.youtube.com/embed/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1"
-                  title="YouTube video player"
-                  frameborder="0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowfullscreen
-                ></iframe>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+# show video only AFTER button press
+if st.session_state.show_tutorial:
+    st.markdown(
+        """
+        <div class="video-wrap">
+          <div class="video-16x9">
+            <iframe
+              src="https://www.youtube.com/embed/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1"
+              title="YouTube video player"
+              frameborder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowfullscreen
+            ></iframe>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-# Extra space before the CSV section
+# extra space before the CSV section
 st.markdown("<div class='spacer-hero'></div>", unsafe_allow_html=True)
 
 
@@ -786,6 +788,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
