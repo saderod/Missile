@@ -638,24 +638,38 @@ st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
 # ------- Show/orial Video -------
+# ---- Tutorial (toggle + looping embed that never reaches the end) ----
+VIDEO_ID = "krCbTpvFqEs"          
+START_AT = 0                      
+END_AT   = 285
+
+# build a privacy-friendly embed that loops between START_AT and END_AT
+yt_src = (
+    f"https://www.youtube-nocookie.com/embed/{VIDEO_ID}"
+    f"?start={START_AT}&end={END_AT}"
+    f"&loop=1&playlist={VIDEO_ID}"        # loop requires playlist=VIDEO_ID
+    f"&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1"
+)
+
 # default: hidden
 if "show_tutorial" not in st.session_state:
     st.session_state.show_tutorial = False
 
-# centered button (no type="primary" -> matches the other buttons)
-btn_l, btn_c, btn_r = st.columns([1, 1, 1])
-with btn_c:
-    if st.button("Watch Tutorial", key="watch_tutorial_button"):
-        st.session_state.show_tutorial = not st.session_state.show_tutorial
+if st.button("Watch Tutorial", key="watch_tutorial"):
+    st.session_state.show_tutorial = not st.session_state.show_tutorial
+
+# a little gap under the button
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
 
 # only render the video when toggled on
 if st.session_state.show_tutorial:
     st.markdown(
-        """
+        f"""
         <div class="video-wrap">
           <div class="video-16x9">
             <iframe
-              src="https://www.youtube.com/embed/krCbTpvFqEs?rel=0&modestbranding=1"
+              src={yt_src}
               title="Tutorial"
               allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowfullscreen
@@ -820,6 +834,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
