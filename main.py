@@ -608,6 +608,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
 # ------- Show/Hide Tutorial Video -------
 # default: hidden
 if "show_tutorial" not in st.session_state:
@@ -788,6 +790,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
