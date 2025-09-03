@@ -49,6 +49,9 @@ st.markdown("""
   margin: .6rem 0 .5rem;
 }
 
+/* keep all buttons consistent and centered when used alone */
+.stButton > button { min-width: 220px; }
+
 /* Make ALL Streamlit buttons larger (text + hit area) */
 .stButton > button{
   font-size: 20px !important;          /* bigger button text */
@@ -817,6 +820,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
