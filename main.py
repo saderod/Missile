@@ -97,12 +97,24 @@ h3, .stMarkdown h3{
 /* Larger gap before the CSV section */
 .spacer-hero{ height: 110px; }
 
-/* Full-app background: black → light gray/white */
-.stApp{
-  background: linear-gradient(180deg, #0b0d10 0%, #161a1e 40%, #f5f7fa 100%) !important;
+/* Darker background gradient (no white) */
+:root{
+  /* tweak these three to taste */
+  --bg-top:    #0b0d10;  /* near-black */
+  --bg-mid:    #12171d;  /* dark slate */
+  --bg-bottom: #1b222a;  /* slightly lighter, still dark */
 }
 
-/* Let the gradient show through the Streamlit header/sidebar */
+.stApp{
+  background: linear-gradient(
+    180deg,
+    var(--bg-top) 0%,
+    var(--bg-mid) 45%,
+    var(--bg-bottom) 100%
+  ) !important;
+}
+
+/* keep header/sidebar transparent so gradient shows through */
 [data-testid="stHeader"], [data-testid="stSidebar"]{
   background: transparent !important;
   backdrop-filter: none !important;
@@ -802,6 +814,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
