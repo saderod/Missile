@@ -639,31 +639,36 @@ st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 if "show_tutorial" not in st.session_state:
     st.session_state.show_tutorial = False
 
-# centered button; toggles visibility
-c1, c2, c3 = st.columns([1,2,1])
-with c2:
-    btn_label = "Watch Tutorial" if not st.session_state.show_tutorial else "Hide Tutorial"
-    if st.button(btn_label, use_container_width=True):
+def _hide_tutorial():
+    st.session_state.show_tutorial = False
+
+# Center the button
+btn_left, btn_mid, btn_right = st.columns([1, 2, 1])
+with btn_mid:
+    # Keep label constant so width doesn't change
+    if st.button("Watch Tutorial", key="watch_tutorial_button", type="primary"):
         st.session_state.show_tutorial = not st.session_state.show_tutorial
 
-# show video only AFTER button press
+# Only render the video if toggled on
 if st.session_state.show_tutorial:
-    st.markdown(
-        """
-        <div class="video-wrap">
-          <div class="video-16x9">
-            <iframe
-              src="https://youtu.be/krCbTpvFqEs"
-              title="YouTube video player"
-              frameborder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowfullscreen
-            ></iframe>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        st.markdown(
+            """
+            <div class="video-wrap">
+              <div class="video-16x9">
+                <iframe
+                  src="https://www.youtube.com/embed/X7Un4wyrNoE?rel=0&modestbranding=1"
+                  title="Tutorial"
+                  allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowfullscreen
+                ></iframe>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        # Separate "Hide" control so the main button text never changes
+        st.button("Hide Tutorial", key="hide_tutorial_button", on_click=_hide_tutorial)
 
 # extra space before the CSV section
 st.markdown("<div class='spacer-hero'></div>", unsafe_allow_html=True)
@@ -814,6 +819,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
