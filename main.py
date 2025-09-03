@@ -122,6 +122,29 @@ h3, .stMarkdown h3{
   background: transparent !important;
   backdrop-filter: none !important;
 }
+
+/* Gradient title text */
+.hero-title{
+  text-align:center;
+  font-weight:900;
+  font-size: clamp(48px, 7vw, 86px);
+  line-height:1.06;
+  letter-spacing:.5px;
+
+  /* gradient colors — tweak to taste */
+  background: linear-gradient(90deg,
+    #a78bfa 0%,
+    #60a5fa 30%,
+    #34d399 65%,
+    #f472b6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent; /* Safari */
+  color: transparent;                   /* others */
+
+  /* optional: subtle glow for dark backgrounds */
+  text-shadow: 0 0 12px rgba(255,255,255,0.05);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -832,6 +855,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
