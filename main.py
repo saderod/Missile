@@ -655,8 +655,10 @@ yt_src = (
 if "show_tutorial" not in st.session_state:
     st.session_state.show_tutorial = False
 
-if st.button("Watch Tutorial", key="watch_tutorial"):
-    st.session_state.show_tutorial = not st.session_state.show_tutorial
+left, center, right = st.columns([1,2,1])
+with center:
+  if st.button("Watch Tutorial", key="watch_tutorial"):
+      st.session_state.show_tutorial = not st.session_state.show_tutorial
 
 # a little gap under the button
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
@@ -830,6 +832,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
