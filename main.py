@@ -637,7 +637,7 @@ st.markdown(
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-# ------- Show/Hide Tutorial Video -------
+# ------- Show/orial Video -------
 # default: hidden
 if "show_tutorial" not in st.session_state:
     st.session_state.show_tutorial = False
@@ -666,10 +666,10 @@ if st.session_state.show_tutorial:
         unsafe_allow_html=True,
     )
     # smaller "Hide" button to collapse, keeps the main label fixed
-    hide_l, hide_c, hide_r = st.columns([1,1,1])
-    with hide_c:
-        if st.button("Hide Tutorial", key="hide_tutorial_button"):
-            st.session_state.show_tutorial = False
+    # hide_l, hide_c, hide_r = st.columns([1,1,1])
+    # with hide_c:
+    #     if st.button("Hide Tutorial", key="hide_tutorial_button"):
+    #         st.session_state.show_tutorial = False
 
 # extra space before the CSV section
 st.markdown("<div class='spacer-hero'></div>", unsafe_allow_html=True)
@@ -820,6 +820,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
