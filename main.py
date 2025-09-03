@@ -71,6 +71,17 @@ h3, .stMarkdown h3{
   font-size: 28px;
   line-height: 1.2;
 }
+
+/* --- add these --- */
+.subtitle{
+  text-align:center;
+  font-weight:700;
+  font-size: clamp(16px, 2.2vw, 22px);
+  line-height:1.3;
+  opacity:.9;
+  margin:-4px 0 10px;   /* tight to the title */
+}
+.spacer-xxl{ height: 72px; }  /* “good chunk” of space */
 </style>
 """, unsafe_allow_html=True)
 
@@ -576,9 +587,31 @@ def apply_imputations(conn, use_llm: bool) -> pd.DataFrame:
 
 ## title text and centering it
 st.markdown(
-    "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 48px;'>Missile AI</h1>",
+    "<h1 style='text-align:center; font-size:72px; line-height:1.06; margin:0.2em 0 8px;'>Missile AI</h1>",
     unsafe_allow_html=True,
 )
+st.markdown(
+    "<p class='subtitle'>AI powered app that fills in missing data in data tables</p>",
+    unsafe_allow_html=True,
+)
+
+# Center the button; toggle embed on click
+if "show_tutorial" not in st.session_state:
+    st.session_state.show_tutorial = False
+
+center_left, center, center_right = st.columns([1, 2, 1])
+with center:
+    if st.button("Watch Tutorial", use_container_width=True):
+        st.session_state.show_tutorial = not st.session_state.show_tutorial
+
+    if st.session_state.show_tutorial:
+        # Streamlit embeds YouTube inline; no navigation away
+        st.video("https://youtu.be/X7Un4wyrNoE?si=z49fyMcWaZuNx4S1")
+
+# Big gap before the next section
+st.markdown("<div class='spacer-xxl'></div>", unsafe_allow_html=True)
+
+
 
 conn = get_connector()
 ensure_objects(conn)
@@ -724,6 +757,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
