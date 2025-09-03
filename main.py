@@ -604,7 +604,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<p class='subtitle'>AI powered app that fills in missing data in data tables</p>",
+    "<p class='subtitle'>AI powered app that fills in missing data in tables</p>",
     unsafe_allow_html=True,
 )
 
@@ -791,6 +791,7 @@ with st.expander("Advanced: Reset Pipeline (danger)"):
             st.exception(e)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
